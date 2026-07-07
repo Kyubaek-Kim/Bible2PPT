@@ -1,1 +1,22 @@
-ppts/*
+# Generated output
+ppts/
+*.pptx
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# PyInstaller
+build/
+dist/
+*.manifest
+
+# Virtual envs / editors
+.venv/
+venv/
+.idea/
+.vscode/
