@@ -1,0 +1,596 @@
+[
+  {
+    "id": "Gen",
+    "order": 1,
+    "testament": "OT",
+    "ko": "창세기",
+    "ko_abbr": "창",
+    "en": "Genesis",
+    "en_abbr": "Gen"
+  },
+  {
+    "id": "Exod",
+    "order": 2,
+    "testament": "OT",
+    "ko": "출애굽기",
+    "ko_abbr": "출",
+    "en": "Exodus",
+    "en_abbr": "Exod"
+  },
+  {
+    "id": "Lev",
+    "order": 3,
+    "testament": "OT",
+    "ko": "레위기",
+    "ko_abbr": "레",
+    "en": "Leviticus",
+    "en_abbr": "Lev"
+  },
+  {
+    "id": "Num",
+    "order": 4,
+    "testament": "OT",
+    "ko": "민수기",
+    "ko_abbr": "민",
+    "en": "Numbers",
+    "en_abbr": "Num"
+  },
+  {
+    "id": "Deut",
+    "order": 5,
+    "testament": "OT",
+    "ko": "신명기",
+    "ko_abbr": "신",
+    "en": "Deuteronomy",
+    "en_abbr": "Deut"
+  },
+  {
+    "id": "Josh",
+    "order": 6,
+    "testament": "OT",
+    "ko": "여호수아",
+    "ko_abbr": "수",
+    "en": "Joshua",
+    "en_abbr": "Josh"
+  },
+  {
+    "id": "Judg",
+    "order": 7,
+    "testament": "OT",
+    "ko": "사사기",
+    "ko_abbr": "삿",
+    "en": "Judges",
+    "en_abbr": "Judg"
+  },
+  {
+    "id": "Ruth",
+    "order": 8,
+    "testament": "OT",
+    "ko": "룻기",
+    "ko_abbr": "룻",
+    "en": "Ruth",
+    "en_abbr": "Ruth"
+  },
+  {
+    "id": "1Sam",
+    "order": 9,
+    "testament": "OT",
+    "ko": "사무엘상",
+    "ko_abbr": "삼상",
+    "en": "1 Samuel",
+    "en_abbr": "1Sam"
+  },
+  {
+    "id": "2Sam",
+    "order": 10,
+    "testament": "OT",
+    "ko": "사무엘하",
+    "ko_abbr": "삼하",
+    "en": "2 Samuel",
+    "en_abbr": "2Sam"
+  },
+  {
+    "id": "1Kgs",
+    "order": 11,
+    "testament": "OT",
+    "ko": "열왕기상",
+    "ko_abbr": "왕상",
+    "en": "1 Kings",
+    "en_abbr": "1Kgs"
+  },
+  {
+    "id": "2Kgs",
+    "order": 12,
+    "testament": "OT",
+    "ko": "열왕기하",
+    "ko_abbr": "왕하",
+    "en": "2 Kings",
+    "en_abbr": "2Kgs"
+  },
+  {
+    "id": "1Chr",
+    "order": 13,
+    "testament": "OT",
+    "ko": "역대상",
+    "ko_abbr": "대상",
+    "en": "1 Chronicles",
+    "en_abbr": "1Chr"
+  },
+  {
+    "id": "2Chr",
+    "order": 14,
+    "testament": "OT",
+    "ko": "역대하",
+    "ko_abbr": "대하",
+    "en": "2 Chronicles",
+    "en_abbr": "2Chr"
+  },
+  {
+    "id": "Ezra",
+    "order": 15,
+    "testament": "OT",
+    "ko": "에스라",
+    "ko_abbr": "스",
+    "en": "Ezra",
+    "en_abbr": "Ezra"
+  },
+  {
+    "id": "Neh",
+    "order": 16,
+    "testament": "OT",
+    "ko": "느헤미야",
+    "ko_abbr": "느",
+    "en": "Nehemiah",
+    "en_abbr": "Neh"
+  },
+  {
+    "id": "Esth",
+    "order": 17,
+    "testament": "OT",
+    "ko": "에스더",
+    "ko_abbr": "에",
+    "en": "Esther",
+    "en_abbr": "Esth"
+  },
+  {
+    "id": "Job",
+    "order": 18,
+    "testament": "OT",
+    "ko": "욥기",
+    "ko_abbr": "욥",
+    "en": "Job",
+    "en_abbr": "Job"
+  },
+  {
+    "id": "Ps",
+    "order": 19,
+    "testament": "OT",
+    "ko": "시편",
+    "ko_abbr": "시",
+    "en": "Psalms",
+    "en_abbr": "Ps"
+  },
+  {
+    "id": "Prov",
+    "order": 20,
+    "testament": "OT",
+    "ko": "잠언",
+    "ko_abbr": "잠",
+    "en": "Proverbs",
+    "en_abbr": "Prov"
+  },
+  {
+    "id": "Eccl",
+    "order": 21,
+    "testament": "OT",
+    "ko": "전도서",
+    "ko_abbr": "전",
+    "en": "Ecclesiastes",
+    "en_abbr": "Eccl"
+  },
+  {
+    "id": "Song",
+    "order": 22,
+    "testament": "OT",
+    "ko": "아가",
+    "ko_abbr": "아",
+    "en": "Song of Songs",
+    "en_abbr": "Song"
+  },
+  {
+    "id": "Isa",
+    "order": 23,
+    "testament": "OT",
+    "ko": "이사야",
+    "ko_abbr": "사",
+    "en": "Isaiah",
+    "en_abbr": "Isa"
+  },
+  {
+    "id": "Jer",
+    "order": 24,
+    "testament": "OT",
+    "ko": "예레미야",
+    "ko_abbr": "렘",
+    "en": "Jeremiah",
+    "en_abbr": "Jer"
+  },
+  {
+    "id": "Lam",
+    "order": 25,
+    "testament": "OT",
+    "ko": "예레미야애가",
+    "ko_abbr": "애",
+    "en": "Lamentations",
+    "en_abbr": "Lam"
+  },
+  {
+    "id": "Ezek",
+    "order": 26,
+    "testament": "OT",
+    "ko": "에스겔",
+    "ko_abbr": "겔",
+    "en": "Ezekiel",
+    "en_abbr": "Ezek"
+  },
+  {
+    "id": "Dan",
+    "order": 27,
+    "testament": "OT",
+    "ko": "다니엘",
+    "ko_abbr": "단",
+    "en": "Daniel",
+    "en_abbr": "Dan"
+  },
+  {
+    "id": "Hos",
+    "order": 28,
+    "testament": "OT",
+    "ko": "호세아",
+    "ko_abbr": "호",
+    "en": "Hosea",
+    "en_abbr": "Hos"
+  },
+  {
+    "id": "Joel",
+    "order": 29,
+    "testament": "OT",
+    "ko": "요엘",
+    "ko_abbr": "욜",
+    "en": "Joel",
+    "en_abbr": "Joel"
+  },
+  {
+    "id": "Amos",
+    "order": 30,
+    "testament": "OT",
+    "ko": "아모스",
+    "ko_abbr": "암",
+    "en": "Amos",
+    "en_abbr": "Amos"
+  },
+  {
+    "id": "Obad",
+    "order": 31,
+    "testament": "OT",
+    "ko": "오바댜",
+    "ko_abbr": "옵",
+    "en": "Obadiah",
+    "en_abbr": "Obad"
+  },
+  {
+    "id": "Jonah",
+    "order": 32,
+    "testament": "OT",
+    "ko": "요나",
+    "ko_abbr": "욘",
+    "en": "Jonah",
+    "en_abbr": "Jonah"
+  },
+  {
+    "id": "Mic",
+    "order": 33,
+    "testament": "OT",
+    "ko": "미가",
+    "ko_abbr": "미",
+    "en": "Micah",
+    "en_abbr": "Mic"
+  },
+  {
+    "id": "Nah",
+    "order": 34,
+    "testament": "OT",
+    "ko": "나훔",
+    "ko_abbr": "나",
+    "en": "Nahum",
+    "en_abbr": "Nah"
+  },
+  {
+    "id": "Hab",
+    "order": 35,
+    "testament": "OT",
+    "ko": "하박국",
+    "ko_abbr": "합",
+    "en": "Habakkuk",
+    "en_abbr": "Hab"
+  },
+  {
+    "id": "Zeph",
+    "order": 36,
+    "testament": "OT",
+    "ko": "스바냐",
+    "ko_abbr": "습",
+    "en": "Zephaniah",
+    "en_abbr": "Zeph"
+  },
+  {
+    "id": "Hag",
+    "order": 37,
+    "testament": "OT",
+    "ko": "학개",
+    "ko_abbr": "학",
+    "en": "Haggai",
+    "en_abbr": "Hag"
+  },
+  {
+    "id": "Zech",
+    "order": 38,
+    "testament": "OT",
+    "ko": "스가랴",
+    "ko_abbr": "슥",
+    "en": "Zechariah",
+    "en_abbr": "Zech"
+  },
+  {
+    "id": "Mal",
+    "order": 39,
+    "testament": "OT",
+    "ko": "말라기",
+    "ko_abbr": "말",
+    "en": "Malachi",
+    "en_abbr": "Mal"
+  },
+  {
+    "id": "Matt",
+    "order": 40,
+    "testament": "NT",
+    "ko": "마태복음",
+    "ko_abbr": "마",
+    "en": "Matthew",
+    "en_abbr": "Matt"
+  },
+  {
+    "id": "Mark",
+    "order": 41,
+    "testament": "NT",
+    "ko": "마가복음",
+    "ko_abbr": "막",
+    "en": "Mark",
+    "en_abbr": "Mark"
+  },
+  {
+    "id": "Luke",
+    "order": 42,
+    "testament": "NT",
+    "ko": "누가복음",
+    "ko_abbr": "눅",
+    "en": "Luke",
+    "en_abbr": "Luke"
+  },
+  {
+    "id": "John",
+    "order": 43,
+    "testament": "NT",
+    "ko": "요한복음",
+    "ko_abbr": "요",
+    "en": "John",
+    "en_abbr": "John"
+  },
+  {
+    "id": "Acts",
+    "order": 44,
+    "testament": "NT",
+    "ko": "사도행전",
+    "ko_abbr": "행",
+    "en": "Acts",
+    "en_abbr": "Acts"
+  },
+  {
+    "id": "Rom",
+    "order": 45,
+    "testament": "NT",
+    "ko": "로마서",
+    "ko_abbr": "롬",
+    "en": "Romans",
+    "en_abbr": "Rom"
+  },
+  {
+    "id": "1Cor",
+    "order": 46,
+    "testament": "NT",
+    "ko": "고린도전서",
+    "ko_abbr": "고전",
+    "en": "1 Corinthians",
+    "en_abbr": "1Cor"
+  },
+  {
+    "id": "2Cor",
+    "order": 47,
+    "testament": "NT",
+    "ko": "고린도후서",
+    "ko_abbr": "고후",
+    "en": "2 Corinthians",
+    "en_abbr": "2Cor"
+  },
+  {
+    "id": "Gal",
+    "order": 48,
+    "testament": "NT",
+    "ko": "갈라디아서",
+    "ko_abbr": "갈",
+    "en": "Galatians",
+    "en_abbr": "Gal"
+  },
+  {
+    "id": "Eph",
+    "order": 49,
+    "testament": "NT",
+    "ko": "에베소서",
+    "ko_abbr": "엡",
+    "en": "Ephesians",
+    "en_abbr": "Eph"
+  },
+  {
+    "id": "Phil",
+    "order": 50,
+    "testament": "NT",
+    "ko": "빌립보서",
+    "ko_abbr": "빌",
+    "en": "Philippians",
+    "en_abbr": "Phil"
+  },
+  {
+    "id": "Col",
+    "order": 51,
+    "testament": "NT",
+    "ko": "골로새서",
+    "ko_abbr": "골",
+    "en": "Colossians",
+    "en_abbr": "Col"
+  },
+  {
+    "id": "1Thess",
+    "order": 52,
+    "testament": "NT",
+    "ko": "데살로니가전서",
+    "ko_abbr": "살전",
+    "en": "1 Thessalonians",
+    "en_abbr": "1Thess"
+  },
+  {
+    "id": "2Thess",
+    "order": 53,
+    "testament": "NT",
+    "ko": "데살로니가후서",
+    "ko_abbr": "살후",
+    "en": "2 Thessalonians",
+    "en_abbr": "2Thess"
+  },
+  {
+    "id": "1Tim",
+    "order": 54,
+    "testament": "NT",
+    "ko": "디모데전서",
+    "ko_abbr": "딤전",
+    "en": "1 Timothy",
+    "en_abbr": "1Tim"
+  },
+  {
+    "id": "2Tim",
+    "order": 55,
+    "testament": "NT",
+    "ko": "디모데후서",
+    "ko_abbr": "딤후",
+    "en": "2 Timothy",
+    "en_abbr": "2Tim"
+  },
+  {
+    "id": "Titus",
+    "order": 56,
+    "testament": "NT",
+    "ko": "디도서",
+    "ko_abbr": "딛",
+    "en": "Titus",
+    "en_abbr": "Titus"
+  },
+  {
+    "id": "Phlm",
+    "order": 57,
+    "testament": "NT",
+    "ko": "빌레몬서",
+    "ko_abbr": "몬",
+    "en": "Philemon",
+    "en_abbr": "Phlm"
+  },
+  {
+    "id": "Heb",
+    "order": 58,
+    "testament": "NT",
+    "ko": "히브리서",
+    "ko_abbr": "히",
+    "en": "Hebrews",
+    "en_abbr": "Heb"
+  },
+  {
+    "id": "Jas",
+    "order": 59,
+    "testament": "NT",
+    "ko": "야고보서",
+    "ko_abbr": "약",
+    "en": "James",
+    "en_abbr": "Jas"
+  },
+  {
+    "id": "1Pet",
+    "order": 60,
+    "testament": "NT",
+    "ko": "베드로전서",
+    "ko_abbr": "벧전",
+    "en": "1 Peter",
+    "en_abbr": "1Pet"
+  },
+  {
+    "id": "2Pet",
+    "order": 61,
+    "testament": "NT",
+    "ko": "베드로후서",
+    "ko_abbr": "벧후",
+    "en": "2 Peter",
+    "en_abbr": "2Pet"
+  },
+  {
+    "id": "1John",
+    "order": 62,
+    "testament": "NT",
+    "ko": "요한일서",
+    "ko_abbr": "요일",
+    "en": "1 John",
+    "en_abbr": "1John"
+  },
+  {
+    "id": "2John",
+    "order": 63,
+    "testament": "NT",
+    "ko": "요한이서",
+    "ko_abbr": "요이",
+    "en": "2 John",
+    "en_abbr": "2John"
+  },
+  {
+    "id": "3John",
+    "order": 64,
+    "testament": "NT",
+    "ko": "요한삼서",
+    "ko_abbr": "요삼",
+    "en": "3 John",
+    "en_abbr": "3John"
+  },
+  {
+    "id": "Jude",
+    "order": 65,
+    "testament": "NT",
+    "ko": "유다서",
+    "ko_abbr": "유",
+    "en": "Jude",
+    "en_abbr": "Jude"
+  },
+  {
+    "id": "Rev",
+    "order": 66,
+    "testament": "NT",
+    "ko": "요한계시록",
+    "ko_abbr": "계",
+    "en": "Revelation",
+    "en_abbr": "Rev"
+  }
+]

@@ -1,0 +1,25 @@
+[project]
+name = "bible2ppt"
+version = "1.0.0"
+description = "Generate Bible-verse PowerPoint slides from a lightweight desktop GUI."
+requires-python = ">=3.10"
+readme = "README.md"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["data", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = [
+    "E501",   # line length handled case-by-case
+    "B008",   # allow calls in argument defaults where intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
