@@ -24,6 +24,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
+from . import fonts
 from .alignment import VerseBundle
 
 # Aspect ratio -> (width_in, height_in).
@@ -38,7 +39,10 @@ TITLE_FONT_SIZE = 40
 SECTION_FONT_SIZE = 26
 MARGIN_IN = 0.6
 IN_TO_PT = 72.0
-LINE_SPACING = 1.25
+LINE_SPACING = 1.3
+# hanging indent for body verses: the verse number hangs to the left while
+# wrapped continuation lines are indented, so verse boundaries read clearly.
+BODY_HANG_FACTOR = 1.6
 
 
 def _display_units(text: str) -> int:
@@ -52,8 +56,18 @@ def _display_units(text: str) -> int:
 @dataclass
 class SlideStyle:
     aspect: str = DEFAULT_ASPECT
-    font_name: str = "나눔고딕"
-    body_font_size: int = 28
+    font_name: str = "나눔스퀘어 볼드"  # stored dropdown label
+    body_font_size: int = 32
+
+    @property
+    def typeface(self) -> str:
+        """Actual font family to set on runs (resolved from the label)."""
+        return fonts.resolve(self.font_name).typeface
+
+    @property
+    def body_bold(self) -> bool:
+        """Whether the chosen face is inherently bold (e.g. NanumSquare Bold)."""
+        return fonts.resolve(self.font_name).bold
 
     @property
     def size_in(self) -> tuple[float, float]:
@@ -248,7 +262,19 @@ def _set_font(run, name: str, size: int, *, bold: bool = False) -> None:
         el.set("typeface", name)
 
 
-def _add_textbox(slide, box, text_lines, name, size, *, bold=False, align=PP_ALIGN.LEFT):
+def _set_hanging_indent(p, hang_pt: float) -> None:
+    """Outdent the first line by ``hang_pt`` so the verse number sticks out left
+    and wrapped continuation lines align under the verse text."""
+    hang = int(Pt(hang_pt))
+    pPr = p._p.get_or_add_pPr()
+    pPr.set("marL", str(hang))
+    pPr.set("indent", str(-hang))
+
+
+def _add_textbox(
+    slide, box, text_lines, name, size, *,
+    bold=False, align=PP_ALIGN.LEFT, line_spacing=None, hanging_pt=None,
+):
     left, top, width, height = box
     tb = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
     tf = tb.text_frame
@@ -258,6 +284,10 @@ def _add_textbox(slide, box, text_lines, name, size, *, bold=False, align=PP_ALI
         p = tf.paragraphs[0] if first else tf.add_paragraph()
         first = False
         p.alignment = align
+        if line_spacing is not None:
+            p.line_spacing = line_spacing
+        if hanging_pt:
+            _set_hanging_indent(p, hanging_pt)
         run = p.add_run()
         run.text = line
         _set_font(run, name, size, bold=bold)
@@ -274,19 +304,25 @@ def _render_page(prs, page: SlidePage, passage: PassageContent, style: SlideStyl
             str(background), Inches(0), Inches(0), width=Inches(w), height=Inches(h)
         )
 
+    face = style.typeface
     has_title = meaningful_title(passage.title)
     if has_title:
-        _add_textbox(slide, style.title_box, [passage.title], style.font_name,
+        _add_textbox(slide, style.title_box, [passage.title], face,
                      TITLE_FONT_SIZE, bold=True)
-        _add_textbox(slide, style.section_box, [passage.section_info], style.font_name,
-                     SECTION_FONT_SIZE)
+        _add_textbox(slide, style.section_box, [passage.section_info], face,
+                     SECTION_FONT_SIZE, bold=style.body_bold)
     else:
         # blank title -> put section info in the title position (task 13)
-        _add_textbox(slide, style.title_box, [passage.section_info], style.font_name,
+        _add_textbox(slide, style.title_box, [passage.section_info], face,
                      TITLE_FONT_SIZE, bold=True)
 
     body_lines = [ln.text for ln in page.lines]
-    _add_textbox(slide, style.body_box, body_lines, style.font_name, style.body_font_size)
+    _add_textbox(
+        slide, style.body_box, body_lines, face, style.body_font_size,
+        bold=style.body_bold,
+        line_spacing=LINE_SPACING,
+        hanging_pt=style.body_font_size * BODY_HANG_FACTOR,
+    )
 
 
 def render(

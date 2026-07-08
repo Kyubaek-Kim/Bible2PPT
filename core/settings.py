@@ -15,7 +15,7 @@ from pathlib import Path
 from . import paths
 
 DEFAULT_ASPECT = "16:9"
-DEFAULT_FONT_SIZE = 28
+DEFAULT_FONT_SIZE = 32
 
 
 @dataclass

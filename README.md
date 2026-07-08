@@ -60,7 +60,7 @@
 | ALEPPO | Aleppo Codex (OT) | 히브리어 | getbible.net | Public domain |
 | VULGATE | Clementine Vulgate | 라틴어 | getbible.net | Public domain |
 
-번들 폰트: **NanumGothic** (SIL Open Font License, `data/fonts/OFL.txt`).
+번들 폰트: **나눔스퀘어 볼드(NanumSquare Bold, 기본)**, **나눔고딕(NanumGothic)** — 모두 SIL Open Font License (`data/fonts/OFL.txt`). 글꼴 드롭다운에는 이 둘과 Windows 기본 글꼴 **맑은 고딕**이 표시됩니다.
 
 > 요청 목록 중 SBLGNT, Nestle1904는 getbible.net에 없어 별도 어댑터가 필요하며, 스크립트에
 > 출처와 함께 TODO로 표시해 두었습니다.

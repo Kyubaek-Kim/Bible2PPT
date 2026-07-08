@@ -38,7 +38,7 @@ class App(tk.Tk):
         self.registry = bible.Registry.load()
         self.i18n = I18n(self.settings.ui_language)
         fonts.register_bundled_fonts()
-        if not self.settings.font:
+        if self.settings.font not in fonts.font_dropdown_values():
             self.settings.font = fonts.default_font_name()
 
         self.passages: list[generator.PassageInput] = []
@@ -521,12 +521,18 @@ class App(tk.Tk):
         name = self.font_var.get() or fonts.default_font_name()
         available, hint = fonts.ensure_font_available(name, self)
         self.font_hint.configure(text="" if available else hint)
+        choice = fonts.resolve(name)
+        families = fonts.system_font_families(self)
+        family = next((f for f in (choice.typeface, choice.label) if f in families), None)
+        body_weight = "bold" if choice.bold else "normal"
         try:
-            title_font = tkfont.Font(family=name, size=18, weight="bold")
-            body_font = tkfont.Font(family=name, size=14)
+            if family is None:
+                raise tk.TclError
+            title_font = tkfont.Font(family=family, size=18, weight="bold")
+            body_font = tkfont.Font(family=family, size=14, weight=body_weight)
         except tk.TclError:
             title_font = tkfont.Font(size=18, weight="bold")
-            body_font = tkfont.Font(size=14)
+            body_font = tkfont.Font(size=14, weight=body_weight)
         self.preview_title.configure(text=self.i18n.t("font_preview_sample_title"), font=title_font)
         self.preview_body.configure(
             text="1. 태초에 하나님이 천지를 창조하시니라 / In the beginning God created the heaven and the earth.",

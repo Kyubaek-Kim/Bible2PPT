@@ -116,6 +116,46 @@ def test_wrap_line_hard_split():
     assert "".join(lines) == "x" * 100
 
 
+def test_curated_fonts_and_resolution():
+    from core import fonts
+
+    labels = fonts.font_dropdown_values()
+    assert labels == ["나눔스퀘어 볼드", "맑은 고딕", "나눔고딕"]
+    assert fonts.default_font_name() == "나눔스퀘어 볼드"
+    # NanumSquare Bold resolves to a bold face; the others are regular
+    assert fonts.resolve("나눔스퀘어 볼드").bold is True
+    assert fonts.resolve("맑은 고딕").bold is False
+    assert fonts.resolve("나눔고딕").typeface == "나눔고딕"
+    # unknown / stale labels fall back to the default
+    assert fonts.resolve("Arial").label == "나눔스퀘어 볼드"
+
+
+def test_body_hanging_indent_and_line_spacing(tmp_path):
+    import re
+    import zipfile
+
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    long_text = "태초에 하나님이 천지를 창조하시니라 " * 6
+    bundle = VerseBundle(coord=Coord("Gen", 1, 1),
+                         cells=[("KRV", Cell(status="ok", label="1", text=long_text))])
+    style = ppt.SlideStyle(aspect="16:9", font_name="나눔스퀘어 볼드", body_font_size=32)
+    assert style.typeface == "나눔스퀘어" and style.body_bold is True
+
+    prs = ppt.render([ppt.PassageContent("창조", "창세기 1:1", [bundle])], style, None)
+    out = ppt.save(prs, tmp_path / "hang.pptx")
+    xml = zipfile.ZipFile(out).read("ppt/slides/slide1.xml").decode()
+
+    # body paragraph carries a hanging indent (marL positive, indent = -marL)
+    marL, indent = re.search(r'marL="(-?\d+)"\s+indent="(-?\d+)"', xml).groups()
+    assert int(marL) > 0 and int(indent) == -int(marL)
+    # 1.3x line spacing -> spcPct val 130000
+    assert 'spcPct val="130000"' in xml
+    # chosen face applied to the runs
+    assert "나눔스퀘어" in xml
+
+
 def test_generate_separate(tmp_path, registry):
     i18n = I18n("ko")
     style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
