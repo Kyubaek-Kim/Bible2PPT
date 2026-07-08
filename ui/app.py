@@ -749,7 +749,7 @@ class ImportDialog(tk.Toplevel):
         ttk.Entry(form, textvariable=self.code_var).grid(row=3, column=1, sticky="ew", pady=1)
         form.columnconfigure(1, weight=1)
 
-        self.register_btn = ttk.Button(self, text=self.i18n.t("import_register"), command=self._register, state="disabled")
+        self.register_btn = ttk.Button(self, text=self.i18n.t("import_register"), command=self._register_translation, state="disabled")
         self.register_btn.pack(anchor="e", padx=8, pady=6)
 
     def _pick(self) -> None:
@@ -783,7 +783,7 @@ class ImportDialog(tk.Toplevel):
             self.problems.insert("end", "\n" + self.i18n.t("review_pass_required") + "\n")
         self.register_btn.configure(state="normal" if r.ok else "disabled")
 
-    def _register(self) -> None:
+    def _register_translation(self) -> None:
         if not self.report or not self.report.ok:
             return
         code = self.code_var.get().strip() or self.abbr_var.get().strip() or "USER"

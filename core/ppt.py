@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from pptx import Presentation
@@ -40,9 +40,18 @@ SECTION_FONT_SIZE = 26
 MARGIN_IN = 0.6
 IN_TO_PT = 72.0
 LINE_SPACING = 1.3
+# A font's intrinsic single-line height is larger than its point size; the
+# "multiple" line-spacing above is applied on top of it. Fold both into the
+# vertical-fit estimate so bundles don't overflow the bottom of a slide.
+FONT_LINE_HEIGHT = 1.2
 # hanging indent for body verses: the verse number hangs to the left while
 # wrapped continuation lines are indented, so verse boundaries read clearly.
 BODY_HANG_FACTOR = 1.6
+# how far the body font size may be auto-reduced to fit verses tidily
+MAX_BODY_SHRINK_PT = 2
+MIN_BODY_FONT_SIZE = 12
+# title auto-shrink bounds (keep the title on one line within the slide width)
+MIN_TITLE_FONT_SIZE = 18
 
 
 def _display_units(text: str) -> int:
@@ -101,16 +110,35 @@ class SlideStyle:
         return max(1, int(width_pt / (self.body_font_size * 0.5)))
 
     @property
+    def line_pitch_pt(self) -> float:
+        """Vertical distance between consecutive body lines, in points."""
+        return self.body_font_size * LINE_SPACING * FONT_LINE_HEIGHT
+
+    @property
     def max_body_lines(self) -> int:
         _, _, _, height_in = self.body_box
         height_pt = height_in * IN_TO_PT
-        return max(1, int(height_pt / (self.body_font_size * LINE_SPACING)))
+        return max(1, int(height_pt / self.line_pitch_pt))
+
+    @property
+    def body_hang_units(self) -> int:
+        """Hanging-indent width in half-em units (reduces wrapped-line width)."""
+        return round(BODY_HANG_FACTOR / 0.5)
 
 
-def wrap_line(text: str, max_units: int) -> list[str]:
-    """Word-wrap ``text`` to ``max_units`` half-em units, hard-splitting long tokens."""
+def wrap_line(text: str, max_units: int, cont_units: int | None = None) -> list[str]:
+    """Word-wrap ``text`` to ``max_units`` half-em units, hard-splitting long tokens.
+
+    When ``cont_units`` is given, the first line is capped at ``max_units`` and
+    every subsequent (wrapped) line at ``cont_units`` — this models the hanging
+    indent, where wrapped lines are narrower than the first.
+    """
     if not text:
         return [""]
+
+    def cap(n_done: int) -> int:
+        return max_units if (n_done == 0 or cont_units is None) else cont_units
+
     lines: list[str] = []
     current = ""
     current_units = 0
@@ -123,10 +151,11 @@ def wrap_line(text: str, max_units: int) -> list[str]:
                 current += token
                 current_units += tu
             continue
-        if current_units + tu <= max_units or not current:
-            if tu > max_units and not current:
+        limit = cap(len(lines))
+        if current_units + tu <= limit or not current:
+            if tu > limit and not current:
                 # token itself longer than a line -> hard split
-                for chunk in _hard_split(token, max_units):
+                for chunk in _hard_split(token, limit):
                     lines.append(chunk)
                 current, current_units = "", 0
                 continue
@@ -134,8 +163,9 @@ def wrap_line(text: str, max_units: int) -> list[str]:
             current_units += tu
         else:
             lines.append(current.rstrip())
-            if tu > max_units:
-                for chunk in _hard_split(token, max_units):
+            limit = cap(len(lines))
+            if tu > limit:
+                for chunk in _hard_split(token, limit):
                     lines.append(chunk)
                 current, current_units = "", 0
             else:
@@ -210,9 +240,40 @@ def _blocks(bundles: list[VerseBundle]) -> list[list[RenderLine]]:
     return blocks
 
 
+def _line_count(line: RenderLine, style: SlideStyle) -> int:
+    """Wrapped-line count for one render line, honouring the hanging indent."""
+    max_units = style.max_units_per_line
+    if line.kind == "verse":
+        cont = max(1, max_units - style.body_hang_units)
+        return len(wrap_line(line.text, max_units, cont))
+    return len(wrap_line(line.text, max_units))
+
+
+def _block_line_count(block: list[RenderLine], style: SlideStyle) -> int:
+    return sum(_line_count(ln, style) for ln in block)
+
+
+def fit_body_style(bundles: list[VerseBundle], style: SlideStyle) -> SlideStyle:
+    """Auto-reduce the body font (up to ``MAX_BODY_SHRINK_PT``) so verses fit tidily.
+
+    Picks the largest size within the shrink budget for which no single bundle
+    overflows a slide, which both avoids downward overflow and reduces awkward
+    single-verse-per-slide splits. If nothing fits, uses the smallest tried.
+    """
+    base = style.body_font_size
+    floor = max(MIN_BODY_FONT_SIZE, base - MAX_BODY_SHRINK_PT)
+    blocks = _blocks(bundles)
+    smallest = style
+    for size in range(base, floor - 1, -1):
+        trial = replace(style, body_font_size=size)
+        smallest = trial
+        if all(_block_line_count(b, trial) <= trial.max_body_lines for b in blocks):
+            return trial
+    return smallest
+
+
 def paginate(bundles: list[VerseBundle], style: SlideStyle) -> list[SlidePage]:
     """Greedy pagination that keeps each bundle intact on a single slide."""
-    max_units = style.max_units_per_line
     max_lines = style.max_body_lines
 
     pages: list[SlidePage] = []
@@ -220,7 +281,7 @@ def paginate(bundles: list[VerseBundle], style: SlideStyle) -> list[SlidePage]:
     current_count = 0
 
     for block in _blocks(bundles):
-        wrapped = sum(len(wrap_line(ln.text, max_units)) for ln in block)
+        wrapped = _block_line_count(block, style)
         if current.lines and current_count + wrapped > max_lines:
             pages.append(current)
             current = SlidePage()
@@ -294,6 +355,18 @@ def _add_textbox(
     return tb
 
 
+def _fit_single_line_size(text: str, box_width_in: float, base_size: int, min_size: int) -> int:
+    """Largest size (≤ ``base_size``) at which ``text`` fits the box width on one line."""
+    width_pt = box_width_in * IN_TO_PT
+    units = _display_units(text)
+    if units == 0:
+        return base_size
+    for size in range(base_size, min_size - 1, -1):
+        if units * (size * 0.5) <= width_pt:
+            return size
+    return min_size
+
+
 def _render_page(prs, page: SlidePage, passage: PassageContent, style: SlideStyle, background: Path | None):
     w, h = style.size_in
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
@@ -305,16 +378,20 @@ def _render_page(prs, page: SlidePage, passage: PassageContent, style: SlideStyl
         )
 
     face = style.typeface
+    title_w = style.title_box[2]
     has_title = meaningful_title(passage.title)
     if has_title:
+        # shrink an over-long title so it never runs past the slide edge
+        title_size = _fit_single_line_size(passage.title, title_w, TITLE_FONT_SIZE, MIN_TITLE_FONT_SIZE)
         _add_textbox(slide, style.title_box, [passage.title], face,
-                     TITLE_FONT_SIZE, bold=True)
+                     title_size, bold=True)
         _add_textbox(slide, style.section_box, [passage.section_info], face,
-                     SECTION_FONT_SIZE, bold=style.body_bold)
+                     SECTION_FONT_SIZE, bold=True)
     else:
         # blank title -> put section info in the title position (task 13)
+        sec_size = _fit_single_line_size(passage.section_info, title_w, TITLE_FONT_SIZE, MIN_TITLE_FONT_SIZE)
         _add_textbox(slide, style.title_box, [passage.section_info], face,
-                     TITLE_FONT_SIZE, bold=True)
+                     sec_size, bold=True)
 
     body_lines = [ln.text for ln in page.lines]
     _add_textbox(
@@ -336,9 +413,11 @@ def render(
     prs.slide_width = Inches(w)
     prs.slide_height = Inches(h)
     for passage in passages:
-        pages = paginate(passage.bundles, style)
+        # auto-fit the body font per passage so verses fill without overflowing
+        passage_style = fit_body_style(passage.bundles, style)
+        pages = paginate(passage.bundles, passage_style)
         for page in pages:
-            _render_page(prs, page, passage, style, background)
+            _render_page(prs, page, passage, passage_style, background)
     return prs
 
 
