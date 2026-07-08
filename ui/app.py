@@ -53,6 +53,7 @@ class App(tk.Tk):
         self._build_scroll_container()
         self._build_all_sections()
         self._load_state()
+        self._bind_mousewheel()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------------ #
@@ -71,15 +72,43 @@ class App(tk.Tk):
         canvas.bind(
             "<Configure>", lambda e: canvas.itemconfigure(self._win, width=e.width)
         )
+        self.canvas = canvas
         canvas.configure(yscrollcommand=vbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         vbar.pack(side="right", fill="y")
-        canvas.bind_all(
-            "<MouseWheel>",
-            lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"),
-        )
-        canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
-        canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
+    def _bind_mousewheel(self) -> None:
+        """Route wheel scrolling to the outer canvas — but only when the pointer
+        is *not* over a widget that scrolls itself (a Listbox or a Text). Binding
+        per-widget instead of ``bind_all`` lets those inner widgets (and open
+        Combobox popdowns, which are separate toplevels we never bind) keep their
+        own wheel behaviour, so the outer view no longer scrolls along with
+        them."""
+        for widget in self._wheelable_widgets(self.canvas):
+            widget.bind("<MouseWheel>", self._on_mousewheel)
+            widget.bind("<Button-4>", self._on_mousewheel)
+            widget.bind("<Button-5>", self._on_mousewheel)
+
+    def _wheelable_widgets(self, root: tk.Widget) -> list[tk.Widget]:
+        collected: list[tk.Widget] = []
+        stack: list[tk.Widget] = [root]
+        while stack:
+            w = stack.pop()
+            if isinstance(w, (tk.Listbox, tk.Text)):
+                continue  # self-scrolling widgets keep the wheel to themselves
+            collected.append(w)
+            stack.extend(w.winfo_children())
+        return collected
+
+    def _on_mousewheel(self, event) -> str:
+        num = getattr(event, "num", 0)
+        if num == 4:
+            self.canvas.yview_scroll(-1, "units")
+        elif num == 5:
+            self.canvas.yview_scroll(1, "units")
+        else:
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"
 
     def _section(self, key: str) -> ttk.LabelFrame:
         frame = ttk.LabelFrame(self.body, text=self.i18n.t(key))
@@ -150,69 +179,99 @@ class App(tk.Tk):
     # ------------------------------------------------------------------ #
     def _build_translations_section(self) -> None:
         sec = self._section("translations")
-        self._label(sec, "select_translations").pack(anchor="w", padx=6)
-        self.trans_list = tk.Listbox(sec, selectmode="multiple", height=6, exportselection=False)
-        self.trans_list.pack(fill="x", padx=6, pady=4)
-        self.trans_list.bind("<<ListboxSelect>>", lambda e: self._on_translation_select())
-
-        row = ttk.Frame(sec)
-        row.pack(fill="x", padx=6, pady=(0, 4))
-        self._label(row, "default_translation").pack(side="left")
-        self.default_trans_var = tk.StringVar()
-        self.default_trans_combo = ttk.Combobox(
-            row, state="readonly", textvariable=self.default_trans_var, width=22
+        head = ttk.Frame(sec)
+        head.pack(fill="x", padx=6)
+        self._label(head, "select_translations").pack(side="left", anchor="w")
+        base_lbl = ttk.Label(head, text=self.i18n.t("base_translation"))
+        base_lbl.pack(side="right")
+        self._i18n_widgets.append((base_lbl, "base_translation"))
+        # one row per translation: [checkbox to select] ........ ["base" radio]
+        self.trans_rows = ttk.Frame(sec)
+        self.trans_rows.pack(fill="x", padx=6, pady=4)
+        self.base_trans_var = tk.StringVar(value=self.settings.default_translation)
+        self._trans_check_vars: dict[str, tk.BooleanVar] = {}
+        self._trans_radios: dict[str, ttk.Radiobutton] = {}
+        base_hint = ttk.Label(
+            sec, text=self.i18n.t("base_translation_hint"),
+            foreground="#666", wraplength=380, justify="left",
         )
-        self.default_trans_combo.pack(side="left", padx=4)
-        self.default_trans_combo.bind(
-            "<<ComboboxSelected>>", lambda e: self._on_default_translation_change()
-        )
+        base_hint.pack(anchor="w", padx=6)
+        self._i18n_widgets.append((base_hint, "base_translation_hint"))
         self._button(sec, "import_bible", self._open_import_dialog).pack(
             anchor="w", padx=6, pady=(0, 4)
         )
 
     def _refresh_translation_list(self) -> None:
-        self.trans_list.delete(0, "end")
+        for child in self.trans_rows.winfo_children():
+            child.destroy()
         self._trans_index_to_code = []
-        metas = self.registry.list_meta()
-        for meta in metas:
-            label = self.i18n.translation_label(meta.name, meta.language)
-            self.trans_list.insert("end", label)
-            self._trans_index_to_code.append(meta.code)
-        # restore selection
-        for i, code in enumerate(self._trans_index_to_code):
-            if code in self.settings.selected_translations:
-                self.trans_list.selection_set(i)
-        # default translation dropdown
-        labels = [
-            self.i18n.translation_label(m.name, m.language) for m in metas
-        ]
-        self.default_trans_combo.configure(values=labels)
-        if self.settings.default_translation in self._trans_index_to_code:
-            self.default_trans_combo.current(
-                self._trans_index_to_code.index(self.settings.default_translation)
+        self._trans_check_vars = {}
+        self._trans_radios = {}
+        for meta in self.registry.list_meta():
+            code = meta.code
+            self._trans_index_to_code.append(code)
+            row = ttk.Frame(self.trans_rows)
+            row.pack(fill="x")
+            var = tk.BooleanVar(value=code in self.settings.selected_translations)
+            self._trans_check_vars[code] = var
+            ttk.Checkbutton(
+                row,
+                text=self.i18n.translation_label(meta.name, meta.language),
+                variable=var,
+                command=lambda c=code: self._on_translation_toggle(c),
+            ).pack(side="left", anchor="w")
+            rb = ttk.Radiobutton(
+                row, text=self.i18n.t("base_mark"), value=code,
+                variable=self.base_trans_var,
+                command=self._on_base_translation_change,
             )
-        elif labels:
-            self.default_trans_combo.current(0)
-            self.settings.default_translation = self._trans_index_to_code[0]
+            rb.pack(side="right")
+            self._trans_radios[code] = rb
+        self._sync_base_radio_state()
+        if hasattr(self, "canvas"):
+            self._bind_mousewheel()
+
+    def _sync_base_radio_state(self) -> None:
+        """Only *selected* translations may serve as the base: disable the other
+        radios and keep the base pointing at a checked translation."""
+        selected = [
+            c for c in self._trans_index_to_code if self._trans_check_vars[c].get()
+        ]
+        for code, rb in self._trans_radios.items():
+            rb.configure(state=("normal" if code in selected else "disabled"))
+        base = self.base_trans_var.get()
+        if base not in selected:
+            base = selected[0] if selected else ""
+            self.base_trans_var.set(base)
+        self.settings.default_translation = base
 
     def _selected_translation_codes(self) -> list[str]:
-        codes = [self._trans_index_to_code[i] for i in self.trans_list.curselection()]
-        # put the default translation first so interleave starts with it
+        codes = [
+            c for c in self._trans_index_to_code if self._trans_check_vars[c].get()
+        ]
+        # put the base translation first so interleave starts with it
         default = self.settings.default_translation
         if default in codes:
             codes = [default] + [c for c in codes if c != default]
         return codes
 
-    def _on_translation_select(self) -> None:
-        self.settings.selected_translations = [
-            self._trans_index_to_code[i] for i in self.trans_list.curselection()
-        ]
+    def _apply_base_change(self) -> None:
+        self._refresh_book_dropdown()
+        if self.book_combo.current() >= 0:
+            self._on_book_change()
 
-    def _on_default_translation_change(self) -> None:
-        idx = self.default_trans_combo.current()
-        if 0 <= idx < len(self._trans_index_to_code):
-            self.settings.default_translation = self._trans_index_to_code[idx]
-            self._refresh_book_dropdown()
+    def _on_translation_toggle(self, code: str) -> None:
+        self.settings.selected_translations = [
+            c for c in self._trans_index_to_code if self._trans_check_vars[c].get()
+        ]
+        prev_base = self.settings.default_translation
+        self._sync_base_radio_state()
+        if self.settings.default_translation != prev_base:
+            self._apply_base_change()
+
+    def _on_base_translation_change(self) -> None:
+        self.settings.default_translation = self.base_trans_var.get()
+        self._apply_base_change()
 
     def _default_translation(self) -> bible.Translation | None:
         return self.registry.get(self.settings.default_translation) or (
@@ -278,48 +337,68 @@ class App(tk.Tk):
         names = [self.i18n.book_name(bid) for bid in self._book_ids]
         self.book_combo.configure(values=names)
 
-    def _on_book_change(self) -> None:
-        trans = self._default_translation()
+    def _current_book_id(self) -> str | None:
         idx = self.book_combo.current()
-        if idx < 0 or trans is None:
-            return
-        book_id = self._book_ids[idx]
-        chapters = trans.chapters(book_id) or list(
+        return self._book_ids[idx] if idx >= 0 else None
+
+    def _chapters_for_book(self, book_id: str) -> list[int]:
+        trans = self._default_translation()
+        chapters = (trans.chapters(book_id) if trans else []) or list(
             bible.canonical_versification().get(book_id, {}).keys()
         )
-        self.chapter_combo.configure(values=[str(c) for c in chapters])
-        self.chapter_var.set("")
-        self.vstart_combo.configure(values=[])
-        self.vend_combo.configure(values=[])
+        return sorted(int(c) for c in chapters)
 
-    def _current_verses(self) -> list[int]:
+    def _verses_for_chapter(self, book_id: str, chapter: int) -> list[int]:
         trans = self._default_translation()
-        idx = self.book_combo.current()
-        if idx < 0 or trans is None or not self.chapter_var.get():
-            return []
-        book_id = self._book_ids[idx]
-        chapter = int(self.chapter_var.get())
-        verses = trans.verses(book_id, chapter)
+        verses = trans.verses(book_id, chapter) if trans else []
         if not verses:
             last = bible.canonical_versification().get(book_id, {}).get(chapter, 0)
             verses = list(range(1, last + 1))
         return verses
 
+    def _on_book_change(self) -> None:
+        book_id = self._current_book_id()
+        if book_id is None:
+            return
+        self.chapter_combo.configure(
+            values=[str(c) for c in self._chapters_for_book(book_id)]
+        )
+        self.chapter_var.set("")
+        self.vstart_combo.configure(values=[])
+        self.vend_combo.configure(values=[])
+        self.vstart_var.set("")
+        self.vend_var.set("")
+
+    def _current_verses(self) -> list[int]:
+        book_id = self._current_book_id()
+        if book_id is None or not self.chapter_var.get():
+            return []
+        return self._verses_for_chapter(book_id, int(self.chapter_var.get()))
+
     def _on_chapter_change(self) -> None:
-        verses = [str(v) for v in self._current_verses()]
-        self.vstart_combo.configure(values=verses)
-        self.vend_combo.configure(values=verses)
+        self.vstart_combo.configure(values=[str(v) for v in self._current_verses()])
+        self.vend_combo.configure(values=[])
         self.vstart_var.set("")
         self.vend_var.set("")
 
     def _on_vstart_change(self) -> None:
-        # end-verse list starts at (and includes) the start verse — fixes the
-        # legacy off-by-one that excluded the start verse.
-        verses = self._current_verses()
-        if not self.vstart_var.get():
+        book_id = self._current_book_id()
+        if book_id is None or not self.chapter_var.get() or not self.vstart_var.get():
             return
-        start = int(self.vstart_var.get())
-        self.vend_combo.configure(values=[str(v) for v in verses if v >= start])
+        start_ch = int(self.chapter_var.get())
+        start_v = int(self.vstart_var.get())
+        # The end-verse list runs from the start verse to the end of the start
+        # chapter, then continues into the following chapters labelled "장:절",
+        # so a cross-chapter range like 창 3:24-4:5 can be picked from dropdowns.
+        options = [
+            str(v) for v in self._verses_for_chapter(book_id, start_ch) if v >= start_v
+        ]
+        for ch in self._chapters_for_book(book_id):
+            if ch <= start_ch:
+                continue
+            options.extend(f"{ch}:{v}" for v in self._verses_for_chapter(book_id, ch))
+        self.vend_combo.configure(values=options)
+        self.vend_var.set("")
 
     # ------------------------------------------------------------------ #
     # Passage list
@@ -337,13 +416,13 @@ class App(tk.Tk):
         direct = self.direct_var.get().strip()
         if direct:
             return direct
-        idx = self.book_combo.current()
-        if idx < 0 or not self.chapter_var.get() or not self.vstart_var.get():
+        book_id = self._current_book_id()
+        if book_id is None or not self.chapter_var.get() or not self.vstart_var.get():
             return None
-        book_id = self._book_ids[idx]
         ref = f"{book_id} {self.chapter_var.get()}:{self.vstart_var.get()}"
-        if self.vend_var.get():
-            ref += f"-{self.vend_var.get()}"
+        end = self.vend_var.get().strip()
+        if end:
+            ref += f"-{end}"  # "-25" (same chapter) or "-4:5" (cross-chapter)
         return ref
 
     def _add_passage(self) -> None:
