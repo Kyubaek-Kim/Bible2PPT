@@ -70,30 +70,48 @@ def _content_layer(size: int) -> Image.Image:
     def R(x0, y0, x1, y1, rad, **kw):
         d.rounded_rectangle([x0 * s, y0 * s, x1 * s, y1 * s], rad * s, **kw)
 
-    # --- Bible (closed book, cover facing us) ---
+    def P(pts, **kw):
+        d.polygon([(x * s, y * s) for x, y in pts], **kw)
+
+    # --- Bible (closed book, cover facing us) in the upper-left ---
     # cream page block peeking out along the right & bottom edges
-    R(210, 205, 745, 795, 34, fill=PAGES)
+    R(95, 105, 585, 605, 34, fill=PAGES)
     # cover, sitting slightly up-left of the pages
-    R(190, 185, 715, 770, 40, fill=COVER)
+    R(70, 80, 560, 580, 40, fill=COVER)
     # darker spine band down the left edge
-    R(190, 185, 268, 770, 40, fill=COVER_DK)
-    d.rectangle([248 * s, 185 * s, 268 * s, 770 * s], fill=COVER_DK)
+    R(70, 80, 158, 580, 40, fill=COVER_DK)
+    d.rectangle([138 * s, 80 * s, 158 * s, 580 * s], fill=COVER_DK)
 
     # --- gold cross on the cover ---
-    ccx = 486  # cross centre x (centred on the cover face, right of the spine)
-    v_top, v_bot = 300, 660
-    h_y = 400
-    bar = 62
+    ccx = 335  # cross centre x (centred on the cover face, right of the spine)
+    v_top, v_bot = 150, 500
+    h_y = 262
+    bar = 70
     R(ccx - bar / 2, v_top, ccx + bar / 2, v_bot, bar / 2, fill=CROSS)  # vertical
-    R(ccx - 150, h_y - bar / 2, ccx + 150, h_y + bar / 2, bar / 2, fill=CROSS)  # cross-bar
+    R(ccx - 138, h_y - bar / 2, ccx + 138, h_y + bar / 2, bar / 2, fill=CROSS)  # cross-bar
 
-    # --- white "PPT" tag overlapping the lower-right corner ---
-    tx0, ty0, tx1, ty1 = 545, 610, 880, 792
-    R(tx0, ty0, tx1, ty1, 30, fill=TAG)
-    font = ImageFont.truetype(str(FONT_PATH), int(118 * s))
-    cx_tag = (tx0 + tx1) / 2 * s
-    cy_tag = (ty0 + ty1) / 2 * s
-    d.text((cx_tag, cy_tag), "PPT", font=font, fill=TAG_TEXT, anchor="mm")
+    # --- bold arrow: Bible "converts to" PPT (diagonal, down-right) ---
+    # shaft as a thick rounded line, plus a triangular head at the tip.
+    ax0, ay0, ax1, ay1 = 500, 520, 588, 608  # shaft, along the (1,1) diagonal
+    d.line(
+        [(ax0 * s, ay0 * s), (ax1 * s, ay1 * s)],
+        fill=TAG, width=int(54 * s), joint="curve",
+    )
+    tip = (658, 678)
+    P([tip, (556, 662), (642, 576)], fill=TAG)  # arrowhead
+
+    # --- big "PPT" in the lower-right, filling the corner ---
+    tx0, ty0, tx1, ty1 = 455, 705, 958, 948
+    base = 100
+    probe = ImageFont.truetype(str(FONT_PATH), base)
+    bbox = d.textbbox((0, 0), "PPT", font=probe)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    scale = min((tx1 - tx0) / tw, (ty1 - ty0) * 0.9 / th) * s
+    font = ImageFont.truetype(str(FONT_PATH), int(base * scale))
+    cx_t, cy_t = (tx0 + tx1) / 2 * s, (ty0 + ty1) / 2 * s
+    # soft dark backing so white letters stay legible on the warm tile
+    d.text((cx_t, cy_t + 5 * s), "PPT", font=font, fill=SHADOW + (170,), anchor="mm")
+    d.text((cx_t, cy_t), "PPT", font=font, fill=TAG, anchor="mm")
     return layer
 
 
