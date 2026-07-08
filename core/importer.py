@@ -92,9 +92,48 @@ def _add_verse(
 # --------------------------------------------------------------------------- #
 # Parsing
 # --------------------------------------------------------------------------- #
+# Encodings tried, in order, when a file has no decisive BOM. UTF-8 first (the
+# modern default), then the common Korean legacy encodings (CP949 ⊇ EUC-KR),
+# then a couple of other frequent single-byte sets. ``latin-1`` never fails, so
+# it is the last-resort catch-all that at least lets parsing proceed.
+_TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "cp949", "euc-kr", "utf-16", "cp1252", "latin-1")
+
+
+def _decode_bytes(data: bytes) -> str:
+    """Decode uploaded bytes robustly across common (esp. Korean) encodings.
+
+    Honours a leading BOM (UTF-8/UTF-16) when present, otherwise tries a
+    prioritised list of encodings and returns the first that decodes cleanly.
+    ``chardet`` is consulted when installed but never required.
+    """
+    if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+        return data.decode("utf-16")
+    if data.startswith(b"\xef\xbb\xbf"):
+        return data.decode("utf-8-sig")
+    for enc in _TEXT_ENCODINGS:
+        try:
+            return data.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    try:  # optional dependency; only used as a hint
+        import chardet
+
+        guess = chardet.detect(data).get("encoding")
+        if guess:
+            return data.decode(guess, errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+    return data.decode("utf-8", errors="replace")
+
+
+def read_text_file(path: str | Path) -> str:
+    """Read a text/JSON upload as a string, tolerant of its encoding."""
+    return _decode_bytes(Path(path).read_bytes())
+
+
 def parse_file(path: str | Path) -> ImportReport:
     p = Path(path)
-    text = p.read_text(encoding="utf-8-sig")
+    text = read_text_file(p)
     if p.suffix.lower() == ".json":
         return _parse_json(text)
     return _parse_txt(text)
@@ -126,7 +165,12 @@ def _parse_txt(content: str) -> ImportReport:
 
 
 def _parse_json(content: str) -> ImportReport:
-    data = json.loads(content)
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as exc:
+        bad = ImportReport(source_format="json")
+        bad.problems.append(Problem(exc.lineno, "", f"invalid JSON: {exc.msg}"))
+        return bad
     report = ImportReport(source_format="json")
     resolver = _resolver()
 
