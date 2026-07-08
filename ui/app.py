@@ -729,6 +729,8 @@ class ImportDialog(tk.Toplevel):
         self.geometry("520x520")
 
         ttk.Button(self, text=self.i18n.t("import_bible"), command=self._pick).pack(anchor="w", padx=8, pady=6)
+        ttk.Label(self, text=self.i18n.t("import_format_hint"), foreground="#666",
+                  justify="left", wraplength=490).pack(anchor="w", padx=8)
         self.stats = ttk.Label(self, text="", justify="left", wraplength=490)
         self.stats.pack(anchor="w", padx=8)
         self.problems = tk.Text(self, height=12, wrap="word")
@@ -745,7 +747,7 @@ class ImportDialog(tk.Toplevel):
         ):
             ttk.Label(form, text=self.i18n.t(key)).grid(row=i, column=0, sticky="w")
             ttk.Entry(form, textvariable=var).grid(row=i, column=1, sticky="ew", pady=1)
-        ttk.Label(form, text="code").grid(row=3, column=0, sticky="w")
+        ttk.Label(form, text=self.i18n.t("import_code")).grid(row=3, column=0, sticky="w")
         ttk.Entry(form, textvariable=self.code_var).grid(row=3, column=1, sticky="ew", pady=1)
         form.columnconfigure(1, weight=1)
 

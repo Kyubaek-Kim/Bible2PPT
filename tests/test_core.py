@@ -316,6 +316,34 @@ def test_import_txt_roundtrip(tmp_path):
     assert report.ok is False  # duplicate blocks review
 
 
+def test_import_txt_cp949_encoding(tmp_path):
+    # the exact case that failed before: a Korean txt saved as CP949/EUC-KR
+    f = tmp_path / "cp949.txt"
+    f.write_bytes("창 1:1 태초에 하나님이 천지를 창조하시니라\n".encode("cp949"))
+    report = importer.parse_file(f)
+    assert report.n_verses == 1
+    # text preserved byte-for-byte after decoding
+    assert report.books["Gen"]["1"]["1"] == "태초에 하나님이 천지를 창조하시니라"
+
+
+def test_import_txt_utf16_and_bom(tmp_path):
+    body = "창 1:1 태초에 본문\n"
+    f16 = tmp_path / "u16.txt"
+    f16.write_bytes(body.encode("utf-16"))
+    assert importer.parse_file(f16).books["Gen"]["1"]["1"] == "태초에 본문"
+    fbom = tmp_path / "bom.txt"
+    fbom.write_bytes(body.encode("utf-8-sig"))
+    assert importer.parse_file(fbom).books["Gen"]["1"]["1"] == "태초에 본문"
+
+
+def test_import_invalid_json_reported_not_raised(tmp_path):
+    f = tmp_path / "bad.json"
+    f.write_text('{"창": {"1": {"1": "본문"', encoding="utf-8")  # truncated
+    report = importer.parse_file(f)  # must not raise
+    assert not report.ok
+    assert any("invalid JSON" in p.reason for p in report.problems)
+
+
 def test_import_json_nested(tmp_path):
     f = tmp_path / "sample.json"
     f.write_text('{"창": {"1": {"1": "본문1", "2": "본문2"}}}', encoding="utf-8")
