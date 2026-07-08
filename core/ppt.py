@@ -53,7 +53,7 @@ def _display_units(text: str) -> int:
 class SlideStyle:
     aspect: str = DEFAULT_ASPECT
     font_name: str = "나눔고딕"
-    body_font_size: int = 40
+    body_font_size: int = 28
 
     @property
     def size_in(self) -> tuple[float, float]:
