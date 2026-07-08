@@ -1,14 +1,14 @@
-"""Generate ``run_icon.ico`` — a simple, legible Bible2PPT app icon.
+"""Generate ``run_icon.ico`` — a legible Bible2PPT app icon.
 
-Concept: "scripture → slides". The icon is deliberately reduced to two bold,
-high-contrast shapes so it stays readable even at 16px in the taskbar:
+Concept: "Bible → PPT". Two bold, high-contrast elements so it reads even small:
 
-* a large white **open book** (universally reads as scripture / Bible), and
-* a small golden **play badge** in the corner (▶ = generate / auto-make),
+* a **Bible** — a deep-red closed book with a gold **cross** on the cover
+  (unmistakably scripture), and
+* a white **"PPT" tag** overlapping its corner (the output format).
 
-both sitting on a warm rounded tile. Everything is drawn big and thick — no
-thin lines, faces or sparkles that dissolve at small sizes. Rendered at 4× and
-downsampled for crisp edges, then exported as a multi-resolution ``.ico``.
+Text is rendered with the bundled ``NanumGothic-Bold`` font so the icon builds
+reproducibly without relying on system fonts. Rendered at 4× and downsampled
+for crisp edges, then exported as a multi-resolution ``.ico``.
 
 Run: ``python scripts/make_icon.py``.
 """
@@ -16,24 +16,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
+FONT_PATH = ROOT / "data" / "fonts" / "NanumGothic-Bold.ttf"
 SIZE = 512
 SS = 4  # supersampling factor
 U = 1000  # design space (drawn in a 1000-unit box, then scaled)
 
-# palette — warm, friendly, high contrast against a white book
-GRAD_A = (255, 122, 89)    # coral
-GRAD_B = (255, 176, 74)    # amber
-BOOK = (255, 255, 255)     # white pages
-BOOK_SHADE = (226, 236, 248)  # faint page shade (right page)
-SPINE = (120, 140, 170)    # soft slate spine
-LINE = (176, 196, 222)     # text lines on the pages
-BADGE = (255, 201, 51)     # golden play badge
-BADGE_EDGE = (255, 255, 255)
-PLAY = (208, 92, 60)       # play triangle (matches the tile)
-SHADOW = (150, 60, 55)
+# palette
+GRAD_A = (255, 138, 101)   # coral
+GRAD_B = (255, 187, 92)    # amber
+COVER = (155, 38, 52)      # deep burgundy Bible cover
+COVER_DK = (120, 26, 40)   # spine / shade
+PAGES = (255, 246, 232)    # cream page block
+CROSS = (247, 201, 72)     # gold cross
+TAG = (255, 255, 255)      # white "PPT" tag
+TAG_TEXT = (198, 58, 66)   # tag text (matches cover)
+SHADOW = (120, 40, 45)
 
 
 def _squircle_mask(size: int, n: float = 4.0) -> Image.Image:
@@ -62,47 +62,38 @@ def _diagonal_gradient(size: int) -> Image.Image:
 
 
 def _content_layer(size: int) -> Image.Image:
-    """Big white open book + a golden play badge, on a transparent layer."""
+    """A burgundy Bible (gold cross on the cover) + a white "PPT" tag."""
     layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
     s = size / U
 
-    def P(pts, **kw):
-        d.polygon([(x * s, y * s) for x, y in pts], **kw)
+    def R(x0, y0, x1, y1, rad, **kw):
+        d.rounded_rectangle([x0 * s, y0 * s, x1 * s, y1 * s], rad * s, **kw)
 
-    def L(x0, y0, x1, y1, w, fill):
-        d.line([(x0 * s, y0 * s), (x1 * s, y1 * s)], fill=fill, width=int(w * s))
+    # --- Bible (closed book, cover facing us) ---
+    # cream page block peeking out along the right & bottom edges
+    R(210, 205, 745, 795, 34, fill=PAGES)
+    # cover, sitting slightly up-left of the pages
+    R(190, 185, 715, 770, 40, fill=COVER)
+    # darker spine band down the left edge
+    R(190, 185, 268, 770, 40, fill=COVER_DK)
+    d.rectangle([248 * s, 185 * s, 268 * s, 770 * s], fill=COVER_DK)
 
-    # --- large open book, centred, filling most of the tile ---
-    cx = 500
-    top = 300        # top of the spine
-    crest = 250      # outer top corners sit a touch higher (gentle fan)
-    bottom = 690
-    drop = 60        # outer bottom corners drop below the spine base
-    left, right = 150, 850
+    # --- gold cross on the cover ---
+    ccx = 486  # cross centre x (centred on the cover face, right of the spine)
+    v_top, v_bot = 300, 660
+    h_y = 400
+    bar = 62
+    R(ccx - bar / 2, v_top, ccx + bar / 2, v_bot, bar / 2, fill=CROSS)  # vertical
+    R(ccx - 150, h_y - bar / 2, ccx + 150, h_y + bar / 2, bar / 2, fill=CROSS)  # cross-bar
 
-    left_page = [(left, crest), (cx, top), (cx, bottom), (left, bottom + drop)]
-    right_page = [(right, crest), (cx, top), (cx, bottom), (right, bottom + drop)]
-    P(left_page, fill=BOOK)
-    P(right_page, fill=BOOK_SHADE)
-    # spine
-    L(cx, top, cx, bottom, 16, SPINE)
-
-    # a few bold text lines per page (thick enough to survive downscaling)
-    for i in range(3):
-        yy = top + 70 + i * 74
-        sag = 26 - i * 4  # lines follow the page fan
-        L(left + 60, yy + sag, cx - 45, yy, 16, LINE)
-        L(cx + 45, yy, right - 60, yy + sag, 16, LINE)
-
-    # --- golden play badge (bottom-right): "generate / auto" ---
-    bcx, bcy, br = 762, 720, 150
-    d.ellipse(
-        [(bcx - br) * s, (bcy - br) * s, (bcx + br) * s, (bcy + br) * s],
-        fill=BADGE, outline=BADGE_EDGE, width=int(20 * s),
-    )
-    tri = [(bcx - 46, bcy - 66), (bcx - 46, bcy + 66), (bcx + 70, bcy)]
-    P(tri, fill=PLAY)
+    # --- white "PPT" tag overlapping the lower-right corner ---
+    tx0, ty0, tx1, ty1 = 545, 610, 880, 792
+    R(tx0, ty0, tx1, ty1, 30, fill=TAG)
+    font = ImageFont.truetype(str(FONT_PATH), int(118 * s))
+    cx_tag = (tx0 + tx1) / 2 * s
+    cy_tag = (ty0 + ty1) / 2 * s
+    d.text((cx_tag, cy_tag), "PPT", font=font, fill=TAG_TEXT, anchor="mm")
     return layer
 
 
