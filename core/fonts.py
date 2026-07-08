@@ -1,13 +1,18 @@
-"""Font handling: bundled OFL fonts, system enumeration, preview support.
+"""Font handling: a small curated font list, bundling, and preview support.
 
-The PPT default font is a **bundled, freely-redistributable** font (NanumGothic,
-OFL) so output is reproducible on any machine — replacing the old hard-coded
-Windows-only fonts (맑은 고딕 / 넥슨 풋볼고딕 B) with their silent ``try/except pass``.
+The font dropdown exposes a **fixed, curated** set of families rather than every
+system face, so a non-technical user picks from options that are known to look
+good and to be available on the Windows target:
 
-The font dropdown lists every family Tkinter can see, but defaults to the bundled
-font. Because the bundled font may not be installed system-wide, the live preview
-first tries to register it for the current process (Windows ``AddFontResourceEx``);
-if that fails it surfaces an install hint (see :func:`ensure_font_available`).
+* **맑은 고딕** — ships with Windows (not bundled/redistributed here);
+* **나눔스퀘어 볼드** — bundled (OFL), the default body font;
+* **나눔고딕** — bundled (OFL).
+
+Bundled fonts (NanumSquare / NanumGothic) are freely redistributable, so output
+is reproducible. Because a bundled font may not be installed system-wide, the
+live preview first tries to register it for the current process (Windows
+``AddFontResourceEx``); if that fails it surfaces an install hint (see
+:func:`ensure_font_available`).
 """
 from __future__ import annotations
 
@@ -18,49 +23,50 @@ from . import paths, platform_util
 
 
 @dataclass(frozen=True)
-class BundledFont:
-    name: str  # family name used for PPT + display (Korean)
-    name_en: str  # Latin family name (matches the font's English name record)
-    regular: Path
-    bold: Path | None = None
+class FontChoice:
+    label: str  # shown in the dropdown and stored in settings
+    typeface: str  # family name used for the PPT run + preview
+    bold: bool  # whether the face is inherently bold (e.g. NanumSquare Bold)
+    bundled: Path | None = None  # bundled TTF, or None for OS-provided fonts
 
 
-def bundled_fonts() -> list[BundledFont]:
-    d = paths.fonts_dir()
-    fonts: list[BundledFont] = []
-    nanum = d / "NanumGothic-Regular.ttf"
-    if nanum.exists():
-        fonts.append(
-            BundledFont(
-                name="나눔고딕",
-                name_en="NanumGothic",
-                regular=nanum,
-                bold=(d / "NanumGothic-Bold.ttf")
-                if (d / "NanumGothic-Bold.ttf").exists()
-                else None,
-            )
-        )
-    return fonts
+def _fonts_dir() -> Path:
+    return paths.fonts_dir()
 
 
-def default_font() -> BundledFont | None:
-    fonts = bundled_fonts()
-    return fonts[0] if fonts else None
+def curated_fonts() -> list[FontChoice]:
+    """The fixed dropdown list, in display order (default first)."""
+    d = _fonts_dir()
+    return [
+        FontChoice("나눔스퀘어 볼드", "나눔스퀘어", True, d / "NanumSquareB.ttf"),
+        FontChoice("맑은 고딕", "맑은 고딕", False, None),
+        FontChoice("나눔고딕", "나눔고딕", False, d / "NanumGothic-Regular.ttf"),
+    ]
+
+
+DEFAULT_FONT_LABEL = "나눔스퀘어 볼드"
+
+
+def resolve(label: str) -> FontChoice:
+    """Map a stored label to its :class:`FontChoice` (falls back to default)."""
+    fonts = curated_fonts()
+    for f in fonts:
+        if label in (f.label, f.typeface):
+            return f
+    return fonts[0]
 
 
 def default_font_name() -> str:
-    f = default_font()
-    return f.name if f else "나눔고딕"
+    return DEFAULT_FONT_LABEL
 
 
 def register_bundled_fonts() -> list[tuple[str, bool]]:
     """Register bundled fonts for the current GUI session (best effort)."""
     results: list[tuple[str, bool]] = []
-    for f in bundled_fonts():
-        ok = platform_util.register_font(f.regular)
-        if f.bold:
-            platform_util.register_font(f.bold)
-        results.append((f.name, ok))
+    for f in curated_fonts():
+        if f.bundled and f.bundled.exists():
+            ok = platform_util.register_font(f.bundled)
+            results.append((f.label, ok))
     return results
 
 
@@ -72,32 +78,29 @@ def system_font_families(tk_root) -> list[str]:
     return sorted(fams)
 
 
-def font_dropdown_values(tk_root) -> list[str]:
-    """Bundled fonts first (the defaults), then the rest of the system families."""
-    bundled = [f.name for f in bundled_fonts()]
-    system = system_font_families(tk_root)
-    ordered = list(bundled)
-    for fam in system:
-        if fam not in ordered:
-            ordered.append(fam)
-    return ordered
+def font_dropdown_values(tk_root=None) -> list[str]:
+    """The curated dropdown labels, in display order."""
+    return [f.label for f in curated_fonts()]
 
 
-def ensure_font_available(name: str, tk_root) -> tuple[bool, str]:
-    """Ensure ``name`` renders in the preview.
+def ensure_font_available(label: str, tk_root) -> tuple[bool, str]:
+    """Ensure ``label`` renders in the preview.
 
     Returns ``(available, hint)``. When a bundled font is not yet visible to
     Tkinter, attempts a per-process registration; if that fails, ``hint``
     explains how to install it so the preview matches the final PPT.
     """
-    if name in system_font_families(tk_root):
-        return True, ""
-    for f in bundled_fonts():
-        if name in (f.name, f.name_en):
-            ok = platform_util.register_font(f.regular)
-            if f.bold:
-                platform_util.register_font(f.bold)
-            if ok and name in system_font_families(tk_root):
+    choice = resolve(label)
+    families = system_font_families(tk_root)
+    for name in (choice.typeface, choice.label):
+        if name in families:
+            return True, ""
+    if choice.bundled and choice.bundled.exists():
+        platform_util.register_font(choice.bundled)
+        families = system_font_families(tk_root)
+        for name in (choice.typeface, choice.label):
+            if name in families:
                 return True, ""
-            return False, platform_util.font_install_hint(f.regular)
-    return name in system_font_families(tk_root), ""
+        return False, platform_util.font_install_hint(choice.bundled)
+    # OS-provided font (e.g. 맑은 고딕): available on the Windows target only.
+    return choice.typeface in families, ""
