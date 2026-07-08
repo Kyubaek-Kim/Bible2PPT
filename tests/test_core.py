@@ -169,8 +169,8 @@ def test_wrap_line_hanging_continuation_is_narrower():
 
 def test_max_body_lines_accounts_for_font_line_height():
     style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
-    # 5in body height / (32 * 1.3 * 1.2)pt ≈ 7 lines (not the naive 8)
-    assert style.max_body_lines == 7
+    # 4.6in body height / (32 * 1.3 * 1.2 ≈ 49.9)pt ≈ 6 lines (not the naive 8)
+    assert style.max_body_lines == 6
 
 
 def test_fit_body_style_shrinks_to_fit(monkeypatch):
@@ -184,6 +184,45 @@ def test_fit_body_style_shrinks_to_fit(monkeypatch):
     fitted = ppt.fit_body_style([bundle], style)
     # never grows, never drops more than the shrink budget
     assert style.body_font_size - ppt.MAX_BODY_SHRINK_PT <= fitted.body_font_size <= style.body_font_size
+
+
+def test_body_lines_use_tab_after_verse_number():
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+    from core.ppt import _blocks
+
+    bundles = [VerseBundle(coord=Coord("Ps", 23, 1),
+                           cells=[("KRV", Cell(status="ok", label="1", text="여호와는 목자시니"))])]
+    lines = [ln for block in _blocks(bundles) for ln in block]
+    # a tab separates the number from the text (drives the straight-edge tab stop)
+    assert lines[0].text == "1.\t여호와는 목자시니"
+
+
+def test_hang_scales_with_widest_verse_number():
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
+    one = [VerseBundle(coord=Coord("Gen", 1, n),
+                       cells=[("KRV", Cell(status="ok", label=str(n), text="x"))]) for n in (1, 5)]
+    big = [VerseBundle(coord=Coord("Ps", 119, 176),
+                       cells=[("KRV", Cell(status="ok", label="176", text="x"))])]
+    # a 3-digit passage gets a wider outdent than a single-digit one
+    assert ppt.body_hang_pt(big, style) > ppt.body_hang_pt(one, style)
+
+
+def test_hanging_indent_sets_tab_stop_in_xml():
+    import zipfile
+
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    bundle = VerseBundle(coord=Coord("Gen", 1, 1),
+                         cells=[("KRV", Cell(status="ok", label="1", text="태초에 하나님이"))])
+    style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
+    prs = ppt.render([ppt.PassageContent("창조", "창세기 1:1", [bundle])], style, None)
+    xml = zipfile.ZipFile(ppt.save(prs, "/tmp/_tab_test.pptx")).read("ppt/slides/slide1.xml").decode()
+    assert "tabLst" in xml and "<a:tab " in xml
 
 
 def test_long_title_is_shrunk_to_width():
