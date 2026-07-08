@@ -38,15 +38,19 @@ DEFAULT_ASPECT = "16:9"
 TITLE_FONT_SIZE = 40
 SECTION_FONT_SIZE = 26
 MARGIN_IN = 0.6
+# body text sits in a roomier box than the title/section so verses have more
+# breathing space on the left, right and bottom of the slide.
+BODY_SIDE_MARGIN_IN = 0.95
+BODY_BOTTOM_MARGIN_IN = 0.9
 IN_TO_PT = 72.0
 LINE_SPACING = 1.3
 # A font's intrinsic single-line height is larger than its point size; the
 # "multiple" line-spacing above is applied on top of it. Fold both into the
 # vertical-fit estimate so bundles don't overflow the bottom of a slide.
 FONT_LINE_HEIGHT = 1.2
-# hanging indent for body verses: the verse number hangs to the left while
-# wrapped continuation lines are indented, so verse boundaries read clearly.
-BODY_HANG_FACTOR = 1.6
+# The body hanging indent is sized per passage from the widest verse number
+# (see ``body_hang_pt``): the number hangs left of a tab stop where every text
+# line begins, giving a straight left edge regardless of number width.
 # how far the body font size may be auto-reduced to fit verses tidily
 MAX_BODY_SHRINK_PT = 2
 MIN_BODY_FONT_SIZE = 12
@@ -86,10 +90,10 @@ class SlideStyle:
     def body_box(self) -> tuple[float, float, float, float]:
         """left, top, width, height (inches) of the body text area."""
         w, h = self.size_in
-        left = MARGIN_IN
+        left = BODY_SIDE_MARGIN_IN
         top = 2.0
-        width = w - 2 * MARGIN_IN
-        height = h - top - 0.5
+        width = w - 2 * BODY_SIDE_MARGIN_IN
+        height = h - top - BODY_BOTTOM_MARGIN_IN
         return left, top, width, height
 
     @property
@@ -120,10 +124,9 @@ class SlideStyle:
         height_pt = height_in * IN_TO_PT
         return max(1, int(height_pt / self.line_pitch_pt))
 
-    @property
-    def body_hang_units(self) -> int:
-        """Hanging-indent width in half-em units (reduces wrapped-line width)."""
-        return round(BODY_HANG_FACTOR / 0.5)
+    def hang_units(self, hang_pt: float) -> int:
+        """Hanging-indent width expressed in half-em units for the body size."""
+        return max(0, round(hang_pt / (self.body_font_size * 0.5)))
 
 
 def wrap_line(text: str, max_units: int, cont_units: int | None = None) -> list[str]:
@@ -215,11 +218,14 @@ def _bundle_block(bundle: VerseBundle, with_marker: bool) -> list[RenderLine]:
     """Flatten one bundle to render lines (optional chapter marker + interleaved cells)."""
     lines: list[RenderLine] = []
     if with_marker:
-        lines.append(RenderLine(text=f"<{bundle.coord.chapter}장>", kind="chapter"))
+        # leading tab aligns the marker with the verse-text column (marL)
+        lines.append(RenderLine(text=f"\t<{bundle.coord.chapter}장>", kind="chapter"))
     for _code, cell in bundle.cells:
         if not cell.visible:
             continue
-        lines.append(RenderLine(text=f"{cell.label}. {cell.text}", kind="verse"))
+        # tab after the number: the number sits in the outdented column while the
+        # text starts at the tab stop, keeping the body's left edge straight.
+        lines.append(RenderLine(text=f"{cell.label}.\t{cell.text}", kind="verse"))
     return lines
 
 
@@ -240,17 +246,54 @@ def _blocks(bundles: list[VerseBundle]) -> list[list[RenderLine]]:
     return blocks
 
 
-def _line_count(line: RenderLine, style: SlideStyle) -> int:
-    """Wrapped-line count for one render line, honouring the hanging indent."""
-    max_units = style.max_units_per_line
-    if line.kind == "verse":
-        cont = max(1, max_units - style.body_hang_units)
-        return len(wrap_line(line.text, max_units, cont))
-    return len(wrap_line(line.text, max_units))
+def _measure_text_pt(text: str, size: int, style: SlideStyle) -> float:
+    """Approximate rendered width of ``text`` in points at ``size``.
+
+    Uses the bundled TTF via Pillow when available (exact); otherwise falls back
+    to a per-character estimate (digits are wider than punctuation)."""
+    choice = fonts.resolve(style.font_name)
+    if choice.bundled and choice.bundled.exists():
+        try:
+            from PIL import ImageFont
+
+            font = ImageFont.truetype(str(choice.bundled), size)
+            return float(font.getlength(text))  # px at 72dpi ≈ points
+        except Exception:  # noqa: BLE001 - fall back to the estimate
+            pass
+    width = 0.0
+    for ch in text:
+        if ch.isdigit():
+            width += 0.60 * size
+        elif ch in ".:-–—":
+            width += 0.32 * size
+        elif unicodedata.east_asian_width(ch) in ("W", "F"):
+            width += 1.0 * size
+        else:
+            width += 0.5 * size
+    return width
 
 
-def _block_line_count(block: list[RenderLine], style: SlideStyle) -> int:
-    return sum(_line_count(ln, style) for ln in block)
+def body_hang_pt(bundles: list[VerseBundle], style: SlideStyle) -> float:
+    """Left outdent (points) sized to the widest verse number in the passage.
+
+    Every body line's text begins here (via a tab stop), so a passage whose
+    numbers are all 1–2 digits gets a tight indent while a Psalm 119 passage
+    (up to ``176``) gets a wider one — in both cases the text column is uniform.
+    """
+    labels = [cell.label for b in bundles for _c, cell in b.cells if cell.visible]
+    size = style.body_font_size
+    widest = max((_measure_text_pt(f"{lb}.", size, style) for lb in labels), default=size)
+    return widest + 0.45 * size  # gap between the number and the text
+
+
+def _text_units(style: SlideStyle, hang_pt: float) -> int:
+    """Usable text width (half-em units) after the hanging indent."""
+    return max(1, style.max_units_per_line - style.hang_units(hang_pt))
+
+
+def _block_line_count(block: list[RenderLine], style: SlideStyle, hang_pt: float) -> int:
+    text_units = _text_units(style, hang_pt)
+    return sum(len(wrap_line(ln.text, text_units)) for ln in block)
 
 
 def fit_body_style(bundles: list[VerseBundle], style: SlideStyle) -> SlideStyle:
@@ -267,21 +310,24 @@ def fit_body_style(bundles: list[VerseBundle], style: SlideStyle) -> SlideStyle:
     for size in range(base, floor - 1, -1):
         trial = replace(style, body_font_size=size)
         smallest = trial
-        if all(_block_line_count(b, trial) <= trial.max_body_lines for b in blocks):
+        hang = body_hang_pt(bundles, trial)
+        if all(_block_line_count(b, trial, hang) <= trial.max_body_lines for b in blocks):
             return trial
     return smallest
 
 
-def paginate(bundles: list[VerseBundle], style: SlideStyle) -> list[SlidePage]:
+def paginate(bundles: list[VerseBundle], style: SlideStyle, hang_pt: float | None = None) -> list[SlidePage]:
     """Greedy pagination that keeps each bundle intact on a single slide."""
     max_lines = style.max_body_lines
+    if hang_pt is None:
+        hang_pt = body_hang_pt(bundles, style)
 
     pages: list[SlidePage] = []
     current = SlidePage()
     current_count = 0
 
     for block in _blocks(bundles):
-        wrapped = _block_line_count(block, style)
+        wrapped = _block_line_count(block, style, hang_pt)
         if current.lines and current_count + wrapped > max_lines:
             pages.append(current)
             current = SlidePage()
@@ -325,11 +371,22 @@ def _set_font(run, name: str, size: int, *, bold: bool = False) -> None:
 
 def _set_hanging_indent(p, hang_pt: float) -> None:
     """Outdent the first line by ``hang_pt`` so the verse number sticks out left
-    and wrapped continuation lines align under the verse text."""
+    and wrapped continuation lines align under the verse text.
+
+    A left tab stop is placed at the text-start position (``hang``). Body lines
+    put a tab right after the verse number, so the number sits alone in the
+    outdented column while *every* text line — first and wrapped alike — begins
+    at ``hang``. This makes the body's left edge a straight vertical line instead
+    of zig-zagging between the number column and the wrapped-line column."""
     hang = int(Pt(hang_pt))
     pPr = p._p.get_or_add_pPr()
     pPr.set("marL", str(hang))
     pPr.set("indent", str(-hang))
+    for existing in pPr.findall(qn("a:tabLst")):
+        pPr.remove(existing)
+    tab_lst = pPr.makeelement(qn("a:tabLst"), {})
+    tab_lst.append(pPr.makeelement(qn("a:tab"), {"pos": str(hang), "algn": "l"}))
+    pPr.append(tab_lst)
 
 
 def _add_textbox(
@@ -367,7 +424,8 @@ def _fit_single_line_size(text: str, box_width_in: float, base_size: int, min_si
     return min_size
 
 
-def _render_page(prs, page: SlidePage, passage: PassageContent, style: SlideStyle, background: Path | None):
+def _render_page(prs, page: SlidePage, passage: PassageContent, style: SlideStyle,
+                 background: Path | None, hang_pt: float):
     w, h = style.size_in
     blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
     slide = prs.slides.add_slide(blank)
@@ -398,7 +456,7 @@ def _render_page(prs, page: SlidePage, passage: PassageContent, style: SlideStyl
         slide, style.body_box, body_lines, face, style.body_font_size,
         bold=style.body_bold,
         line_spacing=LINE_SPACING,
-        hanging_pt=style.body_font_size * BODY_HANG_FACTOR,
+        hanging_pt=hang_pt,
     )
 
 
@@ -415,9 +473,10 @@ def render(
     for passage in passages:
         # auto-fit the body font per passage so verses fill without overflowing
         passage_style = fit_body_style(passage.bundles, style)
-        pages = paginate(passage.bundles, passage_style)
+        hang_pt = body_hang_pt(passage.bundles, passage_style)
+        pages = paginate(passage.bundles, passage_style, hang_pt)
         for page in pages:
-            _render_page(prs, page, passage, passage_style, background)
+            _render_page(prs, page, passage, passage_style, background, hang_pt)
     return prs
 
 
