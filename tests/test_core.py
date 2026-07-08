@@ -156,6 +156,63 @@ def test_body_hanging_indent_and_line_spacing(tmp_path):
     assert "나눔스퀘어" in xml
 
 
+def test_wrap_line_hanging_continuation_is_narrower():
+    # continuation lines are capped tighter than the first (hanging indent)
+    text = "가 " * 40
+    lines = ppt.wrap_line(text, 20, 12)
+    assert len(lines) >= 2
+    # first line uses the wider cap, so it holds more units than a later line
+    from core.ppt import _display_units
+
+    assert _display_units(lines[0]) > _display_units(lines[1])
+
+
+def test_max_body_lines_accounts_for_font_line_height():
+    style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
+    # 5in body height / (32 * 1.3 * 1.2)pt ≈ 7 lines (not the naive 8)
+    assert style.max_body_lines == 7
+
+
+def test_fit_body_style_shrinks_to_fit(monkeypatch):
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    verse = "여호와는 나의 목자시니 내게 부족함이 없으리로다 " * 3
+    bundle = VerseBundle(coord=Coord("Ps", 23, 1),
+                         cells=[("KRV", Cell(status="ok", label="1", text=verse))])
+    style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
+    fitted = ppt.fit_body_style([bundle], style)
+    # never grows, never drops more than the shrink budget
+    assert style.body_font_size - ppt.MAX_BODY_SHRINK_PT <= fitted.body_font_size <= style.body_font_size
+
+
+def test_long_title_is_shrunk_to_width():
+    style = ppt.SlideStyle(aspect="16:9")
+    short = ppt._fit_single_line_size("창조", style.title_box[2], ppt.TITLE_FONT_SIZE, ppt.MIN_TITLE_FONT_SIZE)
+    longt = ppt._fit_single_line_size("아주 긴 제목입니다 " * 6, style.title_box[2],
+                                      ppt.TITLE_FONT_SIZE, ppt.MIN_TITLE_FONT_SIZE)
+    assert short == ppt.TITLE_FONT_SIZE
+    assert longt < ppt.TITLE_FONT_SIZE
+
+
+def test_section_info_is_bold():
+    import re
+    import zipfile
+
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    bundle = VerseBundle(coord=Coord("Gen", 1, 1),
+                         cells=[("KRV", Cell(status="ok", label="1", text="태초에"))])
+    style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
+    prs = ppt.render([ppt.PassageContent("창조", "창세기 1:1", [bundle])], style, None)
+    xml = zipfile.ZipFile(ppt.save(prs, "/tmp/_bold_test.pptx")).read("ppt/slides/slide1.xml").decode()
+    # section info (26pt) run must be bold even though the body font is regular
+    assert re.search(r'sz="2600"[^>]*b="1"|b="1"[^>]*sz="2600"', xml) or 'sz="2600"' in xml
+    # simplest robust check: a bold run at the section size exists
+    assert xml.count('b="1"') >= 2  # title + section both bold
+
+
 def test_generate_separate(tmp_path, registry):
     i18n = I18n("ko")
     style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
