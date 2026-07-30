@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import tkinter as tk
 import tkinter.font as tkfont
+from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -605,6 +606,7 @@ class App(tk.Tk):
 
     def _on_body_bold_change(self) -> None:
         self.settings.body_bold = self.body_bold_var.get()
+        self._update_font_preview()
 
     def _build_style(self) -> ppt.SlideStyle:
         """Assemble a :class:`ppt.SlideStyle` from the current settings,
@@ -638,7 +640,7 @@ class App(tk.Tk):
         choice = fonts.resolve(name)
         families = fonts.system_font_families(self)
         family = next((f for f in (choice.typeface, choice.label) if f in families), None)
-        body_weight = "bold" if choice.bold else "normal"
+        body_weight = "bold" if (choice.bold or self.settings.body_bold) else "normal"
         try:
             if family is None:
                 raise tk.TclError
@@ -955,18 +957,22 @@ class LayoutDialog(tk.Toplevel):
 
         self._rects: dict[str, dict] = {}
         self._drag: tuple | None = None
-        self._draw_boxes(self._current_fractions())
 
         right = ttk.Frame(wrap)
         right.pack(side="left", fill="both", expand=True, padx=(12, 0))
         s = self.settings
         # explicit per-element typography vars (no dynamic attribute access)
         self._title_vars = self._build_element_controls(
-            right, "customize_title", s.title_font, s.title_font_size, s.title_bold
+            right, "customize_title", s.title_font_size, s.title_bold,
+            on_change=self._refresh_fonts,
         )
         self._section_vars = self._build_element_controls(
-            right, "customize_section", s.section_font, s.section_font_size, s.section_bold
+            right, "customize_section", s.section_font_size, s.section_bold,
+            on_change=self._refresh_fonts,
         )
+
+        # draw after the typography vars exist so the preview text can use them
+        self._draw_boxes(self._current_fractions())
 
         btns = ttk.Frame(right)
         btns.pack(anchor="w", pady=(12, 0))
@@ -991,12 +997,57 @@ class LayoutDialog(tk.Toplevel):
             )
             tid = self.canvas.create_text(
                 (x0 + x1) / 2, (y0 + y1) / 2, text=self.i18n.t(f"customize_{key}"),
-                fill=colour, font=("TkDefaultFont", 9, "bold"),
+                fill=colour, font=self._canvas_font(*self._element_style(key)),
             )
             self._rects[key] = {"rect": rid, "text": tid}
             for item in (rid, tid):
                 self.canvas.tag_bind(item, "<Button-1>", lambda e, k=key: self._press(e, k))
                 self.canvas.tag_bind(item, "<B1-Motion>", self._motion)
+
+    def _element_style(self, key: str) -> tuple[str, int, bool]:
+        """Return (font_name, size_pt, bold) for a preview box.
+
+        Every element uses the 화면 설정 글자체; only size/bold differ per
+        element. Title/reference sizes+bold come from this dialog's live
+        controls, the body from the main window's 본문 글자크기/굵게."""
+        font_name = self.settings.font or fonts.default_font_name()
+        if key == "title":
+            return (
+                font_name,
+                self._size_of(self._title_vars["size"], self._style.title_font_size),
+                bool(self._title_vars["bold"].get()),
+            )
+        if key == "section":
+            return (
+                font_name,
+                self._size_of(self._section_vars["size"], self._style.section_font_size),
+                bool(self._section_vars["bold"].get()),
+            )
+        return (font_name, self.settings.body_font_size, self.settings.body_bold)
+
+    def _canvas_font(self, name: str, size_pt: int, bold: bool) -> tkfont.Font:
+        """Build a preview font scaled from PPT points to canvas pixels."""
+        choice = fonts.resolve(name or fonts.default_font_name())
+        families = fonts.system_font_families(self.app)
+        family = next((f for f in (choice.typeface, choice.label) if f in families), None)
+        weight = "bold" if (bold or choice.bold) else "normal"
+        px = max(7, int(size_pt / 72 * self._scale))
+        try:
+            if family is None:
+                raise tk.TclError
+            return tkfont.Font(family=family, size=-px, weight=weight)
+        except tk.TclError:
+            return tkfont.Font(size=-px, weight=weight)
+
+    def _refresh_fonts(self) -> None:
+        """Re-apply preview fonts live when a typography control changes,
+        keeping any in-progress box positions."""
+        for key, _ in _LAYOUT_KEYS:
+            if key in self._rects:
+                self.canvas.itemconfigure(
+                    self._rects[key]["text"],
+                    font=self._canvas_font(*self._element_style(key)),
+                )
 
     def _press(self, event, key: str) -> None:
         self._drag = (key, event.x, event.y)
@@ -1019,24 +1070,27 @@ class LayoutDialog(tk.Toplevel):
 
     # -- element font controls ------------------------------------------- #
     def _build_element_controls(
-        self, parent, title_key: str, font: str, size: int, bold: bool
+        self, parent, title_key: str, size: int, bold: bool,
+        on_change: Callable[[], None],
     ) -> dict[str, tk.Variable]:
-        """Build a font/size/bold control group; return its three Tk vars."""
+        """Build a size/bold control group; return its two Tk vars.
+
+        The font face is intentionally *not* selectable here: it is governed by
+        the 화면 설정 글자체 for every element. ``on_change`` fires whenever a
+        control changes so the preview can update live."""
         frame = ttk.LabelFrame(parent, text=self.i18n.t(title_key))
         frame.pack(fill="x", pady=(0, 8))
-        font_var = tk.StringVar(value=font or fonts.default_font_name())
         size_var = tk.StringVar(value=str(size))
         bold_var = tk.BooleanVar(value=bold)
 
-        ttk.Label(frame, text=self.i18n.t("font")).grid(row=0, column=0, sticky="w", padx=4, pady=2)
-        ttk.Combobox(frame, state="readonly", width=16, textvariable=font_var,
-                     values=fonts.font_dropdown_values()).grid(row=0, column=1, sticky="w", pady=2)
-        ttk.Label(frame, text=self.i18n.t("body_font_size")).grid(row=1, column=0, sticky="w", padx=4, pady=2)
-        ttk.Combobox(frame, state="readonly", width=8, textvariable=size_var,
-                     values=[str(s) for s in FONT_SIZES]).grid(row=1, column=1, sticky="w", pady=2)
-        ttk.Checkbutton(frame, text=self.i18n.t("bold"), variable=bold_var).grid(
-            row=2, column=1, sticky="w", pady=2)
-        return {"font": font_var, "size": size_var, "bold": bold_var}
+        ttk.Label(frame, text=self.i18n.t("body_font_size")).grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        size_combo = ttk.Combobox(frame, state="readonly", width=8, textvariable=size_var,
+                                  values=[str(s) for s in FONT_SIZES])
+        size_combo.grid(row=0, column=1, sticky="w", pady=2)
+        ttk.Checkbutton(frame, text=self.i18n.t("bold"), variable=bold_var,
+                        command=on_change).grid(row=1, column=1, sticky="w", pady=2)
+        size_combo.bind("<<ComboboxSelected>>", lambda e: on_change())
+        return {"size": size_var, "bold": bold_var}
 
     @staticmethod
     def _size_of(var: tk.Variable, fallback: int) -> int:
@@ -1049,10 +1103,12 @@ class LayoutDialog(tk.Toplevel):
     def _save(self) -> None:
         s = self.settings
         s.layout_boxes = {k: self._fraction_of(k) for k, _ in _LAYOUT_KEYS}
-        s.title_font = str(self._title_vars["font"].get())
+        # font face is governed by 화면 설정; keep per-element font empty so it
+        # follows the body font
+        s.title_font = ""
         s.title_font_size = self._size_of(self._title_vars["size"], s.title_font_size)
         s.title_bold = bool(self._title_vars["bold"].get())
-        s.section_font = str(self._section_vars["font"].get())
+        s.section_font = ""
         s.section_font_size = self._size_of(self._section_vars["size"], s.section_font_size)
         s.section_bold = bool(self._section_vars["bold"].get())
         s.save()
@@ -1063,14 +1119,10 @@ class LayoutDialog(tk.Toplevel):
         d = Settings()  # engine defaults
         s = self.settings
         s.layout_boxes = {}
-        s.title_font, s.title_font_size, s.title_bold = d.title_font, d.title_font_size, d.title_bold
-        s.section_font, s.section_font_size, s.section_bold = (
-            d.section_font, d.section_font_size, d.section_bold,
-        )
-        self._title_vars["font"].set(d.title_font or fonts.default_font_name())
+        s.title_font, s.title_font_size, s.title_bold = "", d.title_font_size, d.title_bold
+        s.section_font, s.section_font_size, s.section_bold = "", d.section_font_size, d.section_bold
         self._title_vars["size"].set(str(d.title_font_size))
         self._title_vars["bold"].set(d.title_bold)
-        self._section_vars["font"].set(d.section_font or fonts.default_font_name())
         self._section_vars["size"].set(str(d.section_font_size))
         self._section_vars["bold"].set(d.section_bold)
         s.save()
