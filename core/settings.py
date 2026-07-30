@@ -23,13 +23,28 @@ class Settings:
     ui_language: str = "ko"
     default_translation: str = "KRV"
     selected_translations: list[str] = field(default_factory=lambda: ["KRV"])
+    # translations pinned above the "show more" fold, in the order the user
+    # checked their "자주 사용" (frequently used) boxes.
+    favorite_translations: list[str] = field(default_factory=list)
     aspect_ratio: str = DEFAULT_ASPECT
     font: str = ""  # empty -> resolved to the bundled default at load time
     body_font_size: int = DEFAULT_FONT_SIZE
+    body_bold: bool = True  # user-toggled bold for the body text
     generate_mode: str = "separate"  # "separate" | "combined"
     output_folder: str = ""  # empty -> paths.default_output_dir()
     background: str = ""  # empty -> paths.default_background()
     background_history: list[str] = field(default_factory=list)
+    # Slide-layout customisation (item 6). Boxes are stored as fractional
+    # rectangles [x, y, w, h] of the slide, so they are aspect-independent; an
+    # empty dict means "use the engine defaults". Per-element font settings
+    # override the title / section (reference) styling.
+    layout_boxes: dict[str, list[float]] = field(default_factory=dict)
+    title_font: str = ""  # empty -> body font
+    title_font_size: int = 40
+    title_bold: bool = True
+    section_font: str = ""  # empty -> body font
+    section_font_size: int = 26
+    section_bold: bool = True
 
     # -- persistence ------------------------------------------------------ #
     @classmethod
@@ -63,3 +78,12 @@ class Settings:
             self.background_history.remove(path)
         self.background_history.insert(0, path)
         del self.background_history[limit:]
+
+    # -- favourites ------------------------------------------------------- #
+    def set_favorite(self, code: str, on: bool) -> None:
+        """Pin/unpin a translation; pinning preserves the check order."""
+        if on:
+            if code not in self.favorite_translations:
+                self.favorite_translations.append(code)
+        elif code in self.favorite_translations:
+            self.favorite_translations.remove(code)
