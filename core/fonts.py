@@ -4,9 +4,9 @@ The font dropdown exposes a **fixed, curated** set of families rather than every
 system face, so a non-technical user picks from options that are known to look
 good and to be available on the Windows target:
 
-* **맑은 고딕** — ships with Windows (not bundled/redistributed here);
-* **나눔스퀘어 볼드** — bundled (OFL), the default body font;
-* **나눔고딕** — bundled (OFL).
+* **나눔스퀘어 Bold** — bundled (OFL), the default body font;
+* **나눔고딕 / 나눔고딕 Bold** — bundled (OFL);
+* **맑은 고딕 / 굴림 / 돋움 / 바탕 / 궁서** — common Windows-provided families.
 
 Bundled fonts (NanumSquare / NanumGothic) are freely redistributable, so output
 is reproducible. Because a bundled font may not be installed system-wide, the
@@ -35,16 +35,25 @@ def _fonts_dir() -> Path:
 
 
 def curated_fonts() -> list[FontChoice]:
-    """The fixed dropdown list, in display order (default first)."""
+    """The fixed dropdown list, in display order (default first).
+
+    Bundled faces (OFL) render reproducibly everywhere; the remaining entries
+    are common Windows-provided families (they degrade to a fallback in the
+    preview when not installed, e.g. on the build machine)."""
     d = _fonts_dir()
     return [
-        FontChoice("나눔스퀘어 볼드", "나눔스퀘어", True, d / "NanumSquareB.ttf"),
-        FontChoice("맑은 고딕", "맑은 고딕", False, None),
+        FontChoice("나눔스퀘어 Bold", "나눔스퀘어", True, d / "NanumSquareB.ttf"),
         FontChoice("나눔고딕", "나눔고딕", False, d / "NanumGothic-Regular.ttf"),
+        FontChoice("나눔고딕 Bold", "나눔고딕", True, d / "NanumGothic-Bold.ttf"),
+        FontChoice("맑은 고딕", "맑은 고딕", False, None),
+        FontChoice("굴림", "굴림", False, None),
+        FontChoice("돋움", "돋움", False, None),
+        FontChoice("바탕", "바탕", False, None),
+        FontChoice("궁서", "궁서", False, None),
     ]
 
 
-DEFAULT_FONT_LABEL = "나눔스퀘어 볼드"
+DEFAULT_FONT_LABEL = "나눔스퀘어 Bold"
 
 
 def resolve(label: str) -> FontChoice:

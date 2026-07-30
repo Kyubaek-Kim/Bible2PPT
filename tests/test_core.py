@@ -120,14 +120,15 @@ def test_curated_fonts_and_resolution():
     from core import fonts
 
     labels = fonts.font_dropdown_values()
-    assert labels == ["나눔스퀘어 볼드", "맑은 고딕", "나눔고딕"]
-    assert fonts.default_font_name() == "나눔스퀘어 볼드"
-    # NanumSquare Bold resolves to a bold face; the others are regular
-    assert fonts.resolve("나눔스퀘어 볼드").bold is True
+    assert labels[0] == "나눔스퀘어 Bold"  # default first
+    assert {"나눔고딕", "나눔고딕 Bold", "맑은 고딕"} <= set(labels)
+    assert fonts.default_font_name() == "나눔스퀘어 Bold"
+    # NanumSquare Bold resolves to a bold face; the plain Nanum faces are regular
+    assert fonts.resolve("나눔스퀘어 Bold").bold is True
     assert fonts.resolve("맑은 고딕").bold is False
     assert fonts.resolve("나눔고딕").typeface == "나눔고딕"
     # unknown / stale labels fall back to the default
-    assert fonts.resolve("Arial").label == "나눔스퀘어 볼드"
+    assert fonts.resolve("Arial").label == "나눔스퀘어 Bold"
 
 
 def test_body_hanging_indent_and_line_spacing(tmp_path):
@@ -140,7 +141,7 @@ def test_body_hanging_indent_and_line_spacing(tmp_path):
     long_text = "태초에 하나님이 천지를 창조하시니라 " * 6
     bundle = VerseBundle(coord=Coord("Gen", 1, 1),
                          cells=[("KRV", Cell(status="ok", label="1", text=long_text))])
-    style = ppt.SlideStyle(aspect="16:9", font_name="나눔스퀘어 볼드", body_font_size=32)
+    style = ppt.SlideStyle(aspect="16:9", font_name="나눔스퀘어 Bold", body_font_size=32)
     assert style.typeface == "나눔스퀘어" and style.body_bold is True
 
     prs = ppt.render([ppt.PassageContent("창조", "창세기 1:1", [bundle])], style, None)
@@ -232,6 +233,47 @@ def test_long_title_is_shrunk_to_width():
                                       ppt.TITLE_FONT_SIZE, ppt.MIN_TITLE_FONT_SIZE)
     assert short == ppt.TITLE_FONT_SIZE
     assert longt < ppt.TITLE_FONT_SIZE
+
+
+def test_layout_box_override_moves_boxes():
+    style = ppt.SlideStyle(aspect="16:9")
+    default_body = style.body_box
+    # override body to a custom fractional rect
+    style2 = ppt.SlideStyle(aspect="16:9", layout_boxes={"body": [0.1, 0.5, 0.5, 0.4]})
+    w, h = style2.size_in
+    assert style2.body_box == (0.1 * w, 0.5 * h, 0.5 * w, 0.4 * h)
+    assert style2.body_box != default_body
+    # untouched keys still fall back to defaults
+    assert style2.title_box == style.title_box
+    # default fractions round-trip through the override machinery
+    fr = style.default_layout_fractions()
+    style3 = ppt.SlideStyle(aspect="16:9", layout_boxes=fr)
+    for a, b in zip(style3.body_box, default_body, strict=True):
+        assert abs(a - b) < 1e-6
+
+
+def test_body_bold_override_and_element_styling():
+    # explicit user choice overrides the face's intrinsic weight
+    regular = ppt.SlideStyle(font_name="나눔고딕")
+    assert regular.body_bold is False
+    assert ppt.SlideStyle(font_name="나눔고딕", body_bold_opt=True).body_bold is True
+    assert ppt.SlideStyle(font_name="나눔스퀘어 Bold", body_bold_opt=False).body_bold is False
+    # per-element font falls back to the body font when unset
+    s = ppt.SlideStyle(font_name="나눔고딕", title_font_name="", section_font_name="맑은 고딕")
+    assert s.title_typeface == "나눔고딕"
+    assert s.section_typeface == "맑은 고딕"
+
+
+def test_favorite_translations_order():
+    from core.settings import Settings
+
+    s = Settings()
+    s.set_favorite("KJV", True)
+    s.set_favorite("ASV", True)
+    s.set_favorite("KJV", True)  # idempotent
+    assert s.favorite_translations == ["KJV", "ASV"]
+    s.set_favorite("KJV", False)
+    assert s.favorite_translations == ["ASV"]
 
 
 def test_section_info_is_bold():

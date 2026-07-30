@@ -69,42 +69,96 @@ def _display_units(text: str) -> int:
 @dataclass
 class SlideStyle:
     aspect: str = DEFAULT_ASPECT
-    font_name: str = "나눔스퀘어 볼드"  # stored dropdown label
+    font_name: str = "나눔스퀘어 Bold"  # stored dropdown label
     body_font_size: int = 32
+    # ``None`` -> follow the font face's intrinsic weight; a bool is an explicit
+    # user choice from the body "bold" checkbox.
+    body_bold_opt: bool | None = None
+    # Per-element title / section (reference) styling. Empty font -> body font.
+    title_font_name: str = ""
+    title_font_size: int = TITLE_FONT_SIZE
+    title_bold: bool = True
+    section_font_name: str = ""
+    section_font_size: int = SECTION_FONT_SIZE
+    section_bold: bool = True
+    # Fractional [x, y, w, h] box overrides keyed by "title"/"section"/"body".
+    layout_boxes: dict[str, list[float]] = field(default_factory=dict)
 
     @property
     def typeface(self) -> str:
         """Actual font family to set on runs (resolved from the label)."""
         return fonts.resolve(self.font_name).typeface
 
+    def _face(self, label: str) -> str:
+        return fonts.resolve(label or self.font_name).typeface
+
+    @property
+    def title_typeface(self) -> str:
+        return self._face(self.title_font_name)
+
+    @property
+    def section_typeface(self) -> str:
+        return self._face(self.section_font_name)
+
     @property
     def body_bold(self) -> bool:
-        """Whether the chosen face is inherently bold (e.g. NanumSquare Bold)."""
+        """Body weight: explicit user choice, else the face's intrinsic weight."""
+        if self.body_bold_opt is not None:
+            return self.body_bold_opt
         return fonts.resolve(self.font_name).bold
 
     @property
     def size_in(self) -> tuple[float, float]:
         return ASPECT_RATIOS.get(self.aspect, ASPECT_RATIOS[DEFAULT_ASPECT])
 
-    @property
-    def body_box(self) -> tuple[float, float, float, float]:
-        """left, top, width, height (inches) of the body text area."""
+    def _override(self, key: str) -> tuple[float, float, float, float] | None:
+        frac = self.layout_boxes.get(key)
+        if not frac or len(frac) != 4:
+            return None
         w, h = self.size_in
-        left = BODY_SIDE_MARGIN_IN
-        top = 2.0
-        width = w - 2 * BODY_SIDE_MARGIN_IN
-        height = h - top - BODY_BOTTOM_MARGIN_IN
-        return left, top, width, height
+        x, y, bw, bh = frac
+        return x * w, y * h, bw * w, bh * h
 
-    @property
-    def title_box(self) -> tuple[float, float, float, float]:
+    def _default_title_box(self) -> tuple[float, float, float, float]:
         w, _ = self.size_in
         return MARGIN_IN, 0.25, w - 2 * MARGIN_IN, 1.1
 
-    @property
-    def section_box(self) -> tuple[float, float, float, float]:
+    def _default_section_box(self) -> tuple[float, float, float, float]:
         w, _ = self.size_in
         return MARGIN_IN, 1.15, w - 2 * MARGIN_IN, 0.8
+
+    def _default_body_box(self) -> tuple[float, float, float, float]:
+        w, h = self.size_in
+        return BODY_SIDE_MARGIN_IN, 2.0, w - 2 * BODY_SIDE_MARGIN_IN, h - 2.0 - BODY_BOTTOM_MARGIN_IN
+
+    @property
+    def body_box(self) -> tuple[float, float, float, float]:
+        """left, top, width, height (inches) of the body text area."""
+        return self._override("body") or self._default_body_box()
+
+    @property
+    def title_box(self) -> tuple[float, float, float, float]:
+        return self._override("title") or self._default_title_box()
+
+    @property
+    def section_box(self) -> tuple[float, float, float, float]:
+        return self._override("section") or self._default_section_box()
+
+    def default_layout_fractions(self) -> dict[str, list[float]]:
+        """Engine-default boxes as fractional [x, y, w, h] of the slide.
+
+        Used by the layout-customisation UI to seed the draggable rectangles
+        (and by "reset")."""
+        w, h = self.size_in
+        out: dict[str, list[float]] = {}
+        for key, box in (
+            ("title", self._default_title_box()),
+            ("section", self._default_section_box()),
+            ("body", self._default_body_box()),
+        ):
+            x, y, bw, bh = box
+            out[key] = [x / w, y / h, bw / w, bh / h]
+        return out
 
     @property
     def max_units_per_line(self) -> int:
@@ -435,25 +489,24 @@ def _render_page(prs, page: SlidePage, passage: PassageContent, style: SlideStyl
             str(background), Inches(0), Inches(0), width=Inches(w), height=Inches(h)
         )
 
-    face = style.typeface
     title_w = style.title_box[2]
     has_title = meaningful_title(passage.title)
     if has_title:
         # shrink an over-long title so it never runs past the slide edge
-        title_size = _fit_single_line_size(passage.title, title_w, TITLE_FONT_SIZE, MIN_TITLE_FONT_SIZE)
-        _add_textbox(slide, style.title_box, [passage.title], face,
-                     title_size, bold=True)
-        _add_textbox(slide, style.section_box, [passage.section_info], face,
-                     SECTION_FONT_SIZE, bold=True)
+        title_size = _fit_single_line_size(passage.title, title_w, style.title_font_size, MIN_TITLE_FONT_SIZE)
+        _add_textbox(slide, style.title_box, [passage.title], style.title_typeface,
+                     title_size, bold=style.title_bold)
+        _add_textbox(slide, style.section_box, [passage.section_info], style.section_typeface,
+                     style.section_font_size, bold=style.section_bold)
     else:
         # blank title -> put section info in the title position (task 13)
-        sec_size = _fit_single_line_size(passage.section_info, title_w, TITLE_FONT_SIZE, MIN_TITLE_FONT_SIZE)
-        _add_textbox(slide, style.title_box, [passage.section_info], face,
-                     sec_size, bold=True)
+        sec_size = _fit_single_line_size(passage.section_info, title_w, style.title_font_size, MIN_TITLE_FONT_SIZE)
+        _add_textbox(slide, style.title_box, [passage.section_info], style.title_typeface,
+                     sec_size, bold=style.title_bold)
 
     body_lines = [ln.text for ln in page.lines]
     _add_textbox(
-        slide, style.body_box, body_lines, face, style.body_font_size,
+        slide, style.body_box, body_lines, style.typeface, style.body_font_size,
         bold=style.body_bold,
         line_spacing=LINE_SPACING,
         hanging_pt=hang_pt,
