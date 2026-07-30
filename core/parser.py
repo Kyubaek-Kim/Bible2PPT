@@ -142,7 +142,7 @@ class ReferenceParser:
             v1 = int(m.group("v1"))
             c2 = int(m.group("c2")) if m.group("c2") else c1
             v2 = int(m.group("v2")) if m.group("v2") else v1
-            return Reference(book_id, c1, v1, c2, v2)
+            return self._make_ref(book_id, c1, v1, c2, v2, original=original)
 
         # Case 2: space/dash separated numbers, no colon.
         #   15            -> whole chapter 15
@@ -155,9 +155,25 @@ class ReferenceParser:
         if len(nums) == 1:  # whole chapter
             return Reference(book_id, nums[0], 1, nums[0], None)
         if len(nums) == 2:  # chapter:verse (single verse)
-            return Reference(book_id, nums[0], nums[1], nums[0], nums[1])
+            return self._make_ref(book_id, nums[0], nums[1], nums[0], nums[1], original=original)
         if len(nums) == 3:  # chapter:v1-v2 within one chapter
-            return Reference(book_id, nums[0], nums[1], nums[0], nums[2])
+            return self._make_ref(book_id, nums[0], nums[1], nums[0], nums[2], original=original)
         if len(nums) == 4:  # c1:v1 - c2:v2
-            return Reference(book_id, nums[0], nums[1], nums[2], nums[3])
+            return self._make_ref(book_id, nums[0], nums[1], nums[2], nums[3], original=original)
         raise ParseError(f"too many numbers in: {original!r}")
+
+    @staticmethod
+    def _make_ref(
+        book_id: str, c1: int, v1: int, c2: int, v2: int, *, original: str
+    ) -> Reference:
+        """Build a :class:`Reference`, rejecting non-positive or reversed ranges.
+
+        A range whose end precedes its start (``창 5:10-5:3`` or ``창 5-4``) is a
+        user mistake that would otherwise silently expand to *no* verses; fail
+        loudly so the UI can prompt for a correction instead of emitting an empty
+        slide deck."""
+        if min(c1, v1, c2, v2) < 1:
+            raise ParseError(f"chapter/verse must be positive: {original!r}")
+        if (c2, v2) < (c1, v1):
+            raise ParseError(f"range end precedes start: {original!r}")
+        return Reference(book_id, c1, v1, c2, v2)

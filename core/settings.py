@@ -1,10 +1,16 @@
 """User settings persistence (local JSON in the per-OS user-data folder).
 
 Stores everything needed to restore the UI on next launch: UI language,
-selected translations, default background + background history, aspect ratio,
-font / font size, output mode and output folder. Imported user Bibles live as
-files under the user-data ``bibles`` folder and are rediscovered by the
-registry, so only lightweight bookkeeping is kept here.
+selected + favourite translations, base translation, background + history,
+aspect ratio, body font / size / bold, output mode and folder, plus the slide
+layout-customisation (fractional boxes and per-element title / section
+typography). Imported user Bibles live as files under the user-data ``bibles``
+folder and are rediscovered by the registry, so only lightweight bookkeeping is
+kept here.
+
+Loading is forward/backward tolerant: unknown keys in the JSON are ignored and
+missing keys fall back to the dataclass defaults, so an older settings file
+keeps working after new fields are added.
 """
 from __future__ import annotations
 

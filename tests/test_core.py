@@ -49,6 +49,38 @@ def test_parse_failure(parser):
         parser.parse("nonsense 없는책 1:1")
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "창 5:10-5:3",   # reversed within a chapter
+        "창 5:10-4:1",   # reversed across chapters
+        "창 0:1",        # non-positive chapter
+        "창 1:0",        # non-positive verse
+    ],
+)
+def test_parse_rejects_invalid_ranges(parser, text):
+    with pytest.raises(ParseError):
+        parser.parse(text)
+
+
+def test_generate_reports_no_verses_found(tmp_path, registry):
+    # A book/chapter that no selected translation contains should be reported
+    # as an error rather than producing an empty deck.
+    passages = [generator.PassageInput(reference_text="창 999", title="")]
+    result = generator.generate(
+        passages,
+        registry=registry,
+        translation_codes=[registry.list_meta()[0].code],
+        style=ppt.SlideStyle(),
+        background=None,
+        output_folder=tmp_path,
+        mode="separate",
+        i18n=I18n("ko"),
+    )
+    assert not result.output_paths
+    assert result.errors
+
+
 def test_normalize_text():
     assert normalize_text("창 15 : 1 ~ 15") == "창 15:1-15"
 

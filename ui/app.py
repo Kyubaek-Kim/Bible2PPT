@@ -946,8 +946,14 @@ class LayoutDialog(tk.Toplevel):
 
         right = ttk.Frame(wrap)
         right.pack(side="left", fill="both", expand=True, padx=(12, 0))
-        self._build_element_controls(right, "title", "customize_title")
-        self._build_element_controls(right, "section", "customize_section")
+        s = self.settings
+        # explicit per-element typography vars (no dynamic attribute access)
+        self._title_vars = self._build_element_controls(
+            right, "customize_title", s.title_font, s.title_font_size, s.title_bold
+        )
+        self._section_vars = self._build_element_controls(
+            right, "customize_section", s.section_font, s.section_font_size, s.section_bold
+        )
 
         btns = ttk.Frame(right)
         btns.pack(anchor="w", pady=(12, 0))
@@ -999,18 +1005,15 @@ class LayoutDialog(tk.Toplevel):
         return [x0 / self._cw, y0 / self._ch, (x1 - x0) / self._cw, (y1 - y0) / self._ch]
 
     # -- element font controls ------------------------------------------- #
-    def _build_element_controls(self, parent, key: str, title_key: str) -> None:
+    def _build_element_controls(
+        self, parent, title_key: str, font: str, size: int, bold: bool
+    ) -> dict[str, tk.Variable]:
+        """Build a font/size/bold control group; return its three Tk vars."""
         frame = ttk.LabelFrame(parent, text=self.i18n.t(title_key))
         frame.pack(fill="x", pady=(0, 8))
-        font_val = getattr(self.settings, f"{key}_font") or fonts.default_font_name()
-        size_val = getattr(self.settings, f"{key}_font_size")
-        bold_val = getattr(self.settings, f"{key}_bold")
-        font_var = tk.StringVar(value=font_val)
-        size_var = tk.StringVar(value=str(size_val))
-        bold_var = tk.BooleanVar(value=bold_val)
-        setattr(self, f"_{key}_font_var", font_var)
-        setattr(self, f"_{key}_size_var", size_var)
-        setattr(self, f"_{key}_bold_var", bold_var)
+        font_var = tk.StringVar(value=font or fonts.default_font_name())
+        size_var = tk.StringVar(value=str(size))
+        bold_var = tk.BooleanVar(value=bold)
 
         ttk.Label(frame, text=self.i18n.t("font")).grid(row=0, column=0, sticky="w", padx=4, pady=2)
         ttk.Combobox(frame, state="readonly", width=16, textvariable=font_var,
@@ -1020,29 +1023,44 @@ class LayoutDialog(tk.Toplevel):
                      values=[str(s) for s in FONT_SIZES]).grid(row=1, column=1, sticky="w", pady=2)
         ttk.Checkbutton(frame, text=self.i18n.t("bold"), variable=bold_var).grid(
             row=2, column=1, sticky="w", pady=2)
+        return {"font": font_var, "size": size_var, "bold": bold_var}
+
+    @staticmethod
+    def _size_of(var: tk.Variable, fallback: int) -> int:
+        try:
+            return int(str(var.get()))
+        except (TypeError, ValueError):
+            return fallback
 
     # -- save / reset ---------------------------------------------------- #
     def _save(self) -> None:
-        self.settings.layout_boxes = {k: self._fraction_of(k) for k, _ in _LAYOUT_KEYS}
-        for key in ("title", "section"):
-            setattr(self.settings, f"{key}_font", getattr(self, f"_{key}_font_var").get())
-            setattr(self.settings, f"{key}_font_size", int(getattr(self, f"_{key}_size_var").get()))
-            setattr(self.settings, f"{key}_bold", getattr(self, f"_{key}_bold_var").get())
-        self.settings.save()
+        s = self.settings
+        s.layout_boxes = {k: self._fraction_of(k) for k, _ in _LAYOUT_KEYS}
+        s.title_font = str(self._title_vars["font"].get())
+        s.title_font_size = self._size_of(self._title_vars["size"], s.title_font_size)
+        s.title_bold = bool(self._title_vars["bold"].get())
+        s.section_font = str(self._section_vars["font"].get())
+        s.section_font_size = self._size_of(self._section_vars["size"], s.section_font_size)
+        s.section_bold = bool(self._section_vars["bold"].get())
+        s.save()
         if messagebox.askyesno(self.i18n.t("done"), self.i18n.t("customize_saved")):
             self.destroy()
 
     def _reset(self) -> None:
-        defaults = Settings()
-        self.settings.layout_boxes = {}
-        for key in ("title", "section"):
-            self.settings.__dict__[f"{key}_font"] = getattr(defaults, f"{key}_font")
-            self.settings.__dict__[f"{key}_font_size"] = getattr(defaults, f"{key}_font_size")
-            self.settings.__dict__[f"{key}_bold"] = getattr(defaults, f"{key}_bold")
-            getattr(self, f"_{key}_font_var").set(getattr(defaults, f"{key}_font") or fonts.default_font_name())
-            getattr(self, f"_{key}_size_var").set(str(getattr(defaults, f"{key}_font_size")))
-            getattr(self, f"_{key}_bold_var").set(getattr(defaults, f"{key}_bold"))
-        self.settings.save()
+        d = Settings()  # engine defaults
+        s = self.settings
+        s.layout_boxes = {}
+        s.title_font, s.title_font_size, s.title_bold = d.title_font, d.title_font_size, d.title_bold
+        s.section_font, s.section_font_size, s.section_bold = (
+            d.section_font, d.section_font_size, d.section_bold,
+        )
+        self._title_vars["font"].set(d.title_font or fonts.default_font_name())
+        self._title_vars["size"].set(str(d.title_font_size))
+        self._title_vars["bold"].set(d.title_bold)
+        self._section_vars["font"].set(d.section_font or fonts.default_font_name())
+        self._section_vars["size"].set(str(d.section_font_size))
+        self._section_vars["bold"].set(d.section_bold)
+        s.save()
         self._draw_boxes(self._current_fractions())
 
 

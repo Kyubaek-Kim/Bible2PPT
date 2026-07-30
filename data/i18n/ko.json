@@ -85,6 +85,7 @@
     "no_passages": "먼저 구절을 목록에 담아주세요.",
     "no_translation": "번역본을 하나 이상 선택해주세요.",
     "parse_failed": "구절을 인식하지 못했습니다: {text}",
+    "no_verses_found": "선택한 번역본에 해당 구절이 없습니다: {text}",
     "verse_missing": "(해당 절 없음)",
     "chapter_marker": "<{chapter}장>",
     "review_stats": "책 {books}권 · 장 {chapters}개 · 절 {verses}개",

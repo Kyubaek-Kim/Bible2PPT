@@ -56,6 +56,11 @@ def _build_passage(
     bundles = alignment.build_bundles(
         coords, translations, missing_text=i18n.t("verse_missing")
     )
+    if not bundles:
+        # No selected translation has any verse in this range (e.g. an OT-only
+        # reference with only NT translations selected). Surface it rather than
+        # writing an empty slide deck.
+        raise ValueError(i18n.t("no_verses_found", text=passage.reference_text))
     section_info = format_reference(ref, i18n)
     content = ppt.PassageContent(
         title=passage.title, section_info=section_info, bundles=bundles
