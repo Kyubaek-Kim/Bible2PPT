@@ -271,13 +271,26 @@ class App(tk.Tk):
         favorites = [c for c in self.settings.favorite_translations if c in metas]
         others = [c for c in metas if c not in favorites]
 
-        for code in favorites:
-            m = metas[code]
-            self._make_trans_row(self.fav_rows, code, m.name, m.language)
+        if favorites:
+            self.fav_rows.pack_propagate(True)
+            for code in favorites:
+                m = metas[code]
+                self._make_trans_row(self.fav_rows, code, m.name, m.language)
+        else:
+            self.fav_rows.configure(height=1)
+            self.fav_rows.pack_propagate(False)
         if self._more_expanded:
+            # let the frame grow to fit the rows again after having been pinned
+            # to height 1 while collapsed
+            self.more_rows.pack_propagate(True)
             for code in others:
                 m = metas[code]
                 self._make_trans_row(self.more_rows, code, m.name, m.language)
+        else:
+            # an emptied ttk.Frame keeps its last requested height, so the
+            # section wouldn't shrink back on "접기"; force it to collapse.
+            self.more_rows.configure(height=1)
+            self.more_rows.pack_propagate(False)
 
         key = "show_less" if self._more_expanded else "show_more"
         self.more_btn.configure(text=self.i18n.t(key, count=len(others)))
