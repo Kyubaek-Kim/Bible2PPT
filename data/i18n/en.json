@@ -85,6 +85,7 @@
     "no_passages": "Add at least one passage to the list first.",
     "no_translation": "Select at least one translation.",
     "parse_failed": "Could not parse the reference: {text}",
+    "no_verses_found": "The selected translations have no verses for: {text}",
     "verse_missing": "(verse not present)",
     "chapter_marker": "<Chapter {chapter}>",
     "review_stats": "{books} books · {chapters} chapters · {verses} verses",

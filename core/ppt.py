@@ -3,8 +3,11 @@
 Responsibilities:
 
 * aspect ratio → slide size and text-box geometry (16:9 / 4:3 / A4);
-* fonts → title / section-info / body (single family; body size configurable,
-  title & section fixed spec) with East-Asian font names set correctly;
+* fonts → title / section-info / body, each with its own family / size / bold
+  (body weight can be forced via the UI checkbox), East-Asian names set
+  correctly; title and over-long lines auto-shrink to fit;
+* optional user layout overrides → title / section / body boxes stored as
+  fractional [x, y, w, h] rectangles so a saved layout is aspect-independent;
 * full-slide background image;
 * verse formatting → verse-number prefix, one verse per line, ``<N장>`` marker at
   chapter changes, cross-translation interleave;
