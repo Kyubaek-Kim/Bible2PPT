@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import time
 from dataclasses import dataclass
+from itertools import count
 from pathlib import Path
 
 from PIL import Image
@@ -77,12 +78,42 @@ def apply_crop(image_path: str | Path, plan: CropPlan, out_path: str | Path) -> 
 
 
 def add_to_history(image_path: str | Path) -> Path:
-    """Copy a custom background into the history folder; return the stored path."""
+    """Copy a newly attached background into the history folder (once).
+
+    Called only when the user *attaches* an image — never when selecting an
+    already-registered one — so the list can't grow duplicate timestamped
+    copies. A numeric suffix guards against same-second collisions.
+    """
     src = Path(image_path)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    dst = paths.background_history_dir() / f"{stamp}_{src.name}"
+    hist = paths.background_history_dir()
+    dst = hist / f"{stamp}_{src.name}"
+    for i in count(1):
+        if not dst.exists():
+            break
+        dst = hist / f"{stamp}-{i}_{src.name}"
     shutil.copy2(src, dst)
     return dst
+
+
+def delete_background(stored_path: str | Path) -> None:
+    """Delete a registered background file (and any cached aspect crops of it).
+
+    Only removes files under the app's background folders; a missing file is
+    ignored so deletion is idempotent.
+    """
+    stored = Path(stored_path)
+    hist = paths.background_history_dir().resolve()
+    try:
+        within_hist = stored.resolve().parent == hist
+    except OSError:
+        within_hist = False
+    if within_hist:
+        stored.unlink(missing_ok=True)
+    # drop cached "<aspect>_<name>" crops derived from this original
+    cache = paths.background_cache_dir()
+    for f in cache.glob(f"*_{stored.name}"):
+        f.unlink(missing_ok=True)
 
 
 def emu_to_cm(emu: int) -> float:

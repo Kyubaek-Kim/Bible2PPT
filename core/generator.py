@@ -110,7 +110,11 @@ def generate(
         return GenerationResult(outputs, errors)
 
     if mode == "combined":
-        prs = ppt.render([c for c, _ in contents], style, background)
+        try:
+            prs = ppt.render([c for c, _ in contents], style, background)
+        except ppt.PaginationError as exc:
+            errors.append((passages[0], str(exc)))
+            return GenerationResult(outputs, errors)
         first_section = contents[0][1]
         suffix = f"_외{len(contents) - 1}건" if len(contents) > 1 else ""
         out = output_folder / f"{_safe_filename(first_section)}{suffix}.pptx"
@@ -121,7 +125,11 @@ def generate(
             base = _safe_filename(section)
             seen[base] = seen.get(base, 0) + 1
             name = base if seen[base] == 1 else f"{base}({seen[base]})"
-            prs = ppt.render([content], style, background)
+            try:
+                prs = ppt.render([content], style, background)
+            except ppt.PaginationError as exc:
+                errors.append((PassageInput(reference_text=section, title=content.title), str(exc)))
+                continue
             outputs.append(ppt.save(prs, output_folder / f"{name}.pptx"))
 
     return GenerationResult(outputs, errors)

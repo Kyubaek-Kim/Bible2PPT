@@ -38,19 +38,27 @@ class Settings:
     body_bold: bool = True  # user-toggled bold for the body text
     generate_mode: str = "separate"  # "separate" | "combined"
     output_folder: str = ""  # empty -> paths.default_output_dir()
-    background: str = ""  # empty -> paths.default_background()
+    # Registered custom backgrounds (stored *original* image paths). The default
+    # background is always implicitly the first option and is not listed here.
     background_history: list[str] = field(default_factory=list)
+    # The selected background: "" -> the built-in default, else one of the paths
+    # in ``background_history``. Persisted so the choice survives a restart.
+    selected_background: str = ""
+    # Text colours as ``#rrggbb`` (empty -> engine default black).
+    title_color: str = ""
+    section_color: str = ""
+    body_color: str = ""
     # Slide-layout customisation (item 6). Boxes are stored as fractional
     # rectangles [x, y, w, h] of the slide, so they are aspect-independent; an
-    # empty dict means "use the engine defaults". Per-element font settings
-    # override the title / section (reference) styling.
+    # empty dict means "use the engine defaults". The font *face* is always the
+    # global 화면 설정 글자체; only size / bold / visibility differ per element.
     layout_boxes: dict[str, list[float]] = field(default_factory=dict)
-    title_font: str = ""  # empty -> body font
     title_font_size: int = 40
     title_bold: bool = True
-    section_font: str = ""  # empty -> body font
+    title_enabled: bool = True
     section_font_size: int = 26
     section_bold: bool = True
+    section_enabled: bool = True
 
     # -- persistence ------------------------------------------------------ #
     @classmethod
@@ -77,13 +85,35 @@ class Settings:
         return Path(self.output_folder) if self.output_folder else paths.default_output_dir()
 
     def resolved_background(self) -> Path:
-        return Path(self.background) if self.background else paths.default_background()
+        """The selected *original* background image (default when none selected)."""
+        if self.selected_background and Path(self.selected_background).exists():
+            return Path(self.selected_background)
+        return paths.default_background()
 
-    def add_background_history(self, path: str, limit: int = 10) -> None:
+    def background_options(self) -> list[tuple[str, str]]:
+        """(key, display-name) pairs for the 배경 선택 dropdown.
+
+        The first option is always the built-in default (key ``""``); the rest
+        are the registered custom backgrounds, newest first.
+        """
+        opts: list[tuple[str, str]] = [("", "background_default")]
+        for p in self.background_history:
+            opts.append((p, Path(p).name))
+        return opts
+
+    def add_background(self, path: str, limit: int = 20) -> None:
+        """Register a newly attached background (newest first, de-duplicated)."""
         if path in self.background_history:
             self.background_history.remove(path)
         self.background_history.insert(0, path)
         del self.background_history[limit:]
+
+    def remove_background(self, path: str) -> None:
+        """Unregister a background; reset the selection to default if it was it."""
+        if path in self.background_history:
+            self.background_history.remove(path)
+        if self.selected_background == path:
+            self.selected_background = ""
 
     # -- favourites ------------------------------------------------------- #
     def set_favorite(self, code: str, on: bool) -> None:
