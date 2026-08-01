@@ -12,8 +12,12 @@ Responsibilities:
 * verse formatting → verse-number prefix, one verse per line, ``<N장>`` marker at
   chapter changes, cross-translation interleave;
 * pagination → a verse *bundle* (all translations of one canonical verse) never
-  splits across slides; lines-per-slide are recomputed from font/size/ratio; a
-  bundle longer than a whole slide gets its own slide (overflow allowed).
+  splits across slides; lines-per-slide are recomputed from font/size/ratio. The
+  body is packed to use the available area well, but never overflows the slide
+  nor the header band: if an indivisible bundle would overflow, the body font is
+  shrunk (down to a safe minimum) until it fits, and only if even that is
+  impossible is a structured :class:`PaginationError` raised — the engine never
+  silently clips or overflows.
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from pptx import Presentation
+from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
@@ -44,13 +49,20 @@ MARGIN_IN = 0.6
 # body text sits in a roomier box than the title/section so verses have more
 # breathing space on the left, right and bottom of the slide.
 BODY_SIDE_MARGIN_IN = 0.95
-BODY_BOTTOM_MARGIN_IN = 0.9
+BODY_BOTTOM_MARGIN_IN = 0.7
 IN_TO_PT = 72.0
 LINE_SPACING = 1.3
 # A font's intrinsic single-line height is larger than its point size; the
 # "multiple" line-spacing above is applied on top of it. Fold both into the
-# vertical-fit estimate so bundles don't overflow the bottom of a slide.
-FONT_LINE_HEIGHT = 1.2
+# vertical-fit estimate so bundles don't overflow the bottom of a slide. This is
+# a *safe upper bound* over the win-ascent/descent of the bundled faces
+# (NanumGothic ≈1.08, NanumSquare ≈1.11), so the fit never overflows while still
+# packing verses more tightly than the previous 1.2 guess.
+FONT_LINE_HEIGHT = 1.15
+# where the body starts (inches from the top) when the header (title/section) is
+# present vs. hidden — hiding both reclaims that space for more verses.
+BODY_TOP_WITH_HEADER_IN = 2.0
+BODY_TOP_NO_HEADER_IN = 0.5
 # The body hanging indent is sized per passage from the widest verse number
 # (see ``body_hang_pt``): the number hangs left of a tab stop where every text
 # line begins, giving a straight left edge regardless of number width.
@@ -77,38 +89,49 @@ class SlideStyle:
     # ``None`` -> follow the font face's intrinsic weight; a bool is an explicit
     # user choice from the body "bold" checkbox.
     body_bold_opt: bool | None = None
-    # Per-element title / section (reference) styling. Empty font -> body font.
-    title_font_name: str = ""
+    # Per-element title / section (reference) styling. The *font face* is always
+    # the single global ``font_name`` (chosen in 화면 설정); only size / bold /
+    # visibility differ per element, so a title can never get stuck on a stale
+    # per-element face.
     title_font_size: int = TITLE_FONT_SIZE
     title_bold: bool = True
-    section_font_name: str = ""
+    title_enabled: bool = True
     section_font_size: int = SECTION_FONT_SIZE
     section_bold: bool = True
+    section_enabled: bool = True
+    # Text colours as ``#rrggbb`` (empty -> engine default black).
+    title_color: str = ""
+    section_color: str = ""
+    body_color: str = ""
     # Fractional [x, y, w, h] box overrides keyed by "title"/"section"/"body".
     layout_boxes: dict[str, list[float]] = field(default_factory=dict)
 
     @property
+    def _choice(self) -> fonts.FontChoice:
+        return fonts.resolve(self.font_name)
+
+    @property
     def typeface(self) -> str:
-        """Actual font family to set on runs (resolved from the label)."""
-        return fonts.resolve(self.font_name).typeface
+        """Actual font family to set on runs (resolved from the label).
 
-    def _face(self, label: str) -> str:
-        return fonts.resolve(label or self.font_name).typeface
+        Every element (title / section / body) shares this single family.
+        """
+        return self._choice.typeface
 
-    @property
-    def title_typeface(self) -> str:
-        return self._face(self.title_font_name)
-
-    @property
-    def section_typeface(self) -> str:
-        return self._face(self.section_font_name)
+    # title / section share the global body typeface (no per-element face)
+    title_typeface = typeface
+    section_typeface = typeface
 
     @property
     def body_bold(self) -> bool:
         """Body weight: explicit user choice, else the face's intrinsic weight."""
         if self.body_bold_opt is not None:
             return self.body_bold_opt
-        return fonts.resolve(self.font_name).bold
+        return self._choice.bold
+
+    def run_bold(self, user_bold: bool) -> bool:
+        """Effective bold bit for a run in the global face (see ``fonts.run_bold``)."""
+        return fonts.run_bold(self._choice, user_bold)
 
     @property
     def size_in(self) -> tuple[float, float]:
@@ -132,7 +155,12 @@ class SlideStyle:
 
     def _default_body_box(self) -> tuple[float, float, float, float]:
         w, h = self.size_in
-        return BODY_SIDE_MARGIN_IN, 2.0, w - 2 * BODY_SIDE_MARGIN_IN, h - 2.0 - BODY_BOTTOM_MARGIN_IN
+        # reclaim the header band for the body when both title and section are
+        # hidden, so verses can use (almost) the whole slide.
+        top = BODY_TOP_WITH_HEADER_IN
+        if not self.title_enabled and not self.section_enabled:
+            top = BODY_TOP_NO_HEADER_IN
+        return BODY_SIDE_MARGIN_IN, top, w - 2 * BODY_SIDE_MARGIN_IN, h - top - BODY_BOTTOM_MARGIN_IN
 
     @property
     def body_box(self) -> tuple[float, float, float, float]:
@@ -373,6 +401,11 @@ def fit_body_style(bundles: list[VerseBundle], style: SlideStyle) -> SlideStyle:
     return smallest
 
 
+class PaginationError(Exception):
+    """Raised when an indivisible verse bundle cannot fit a slide even at the
+    minimum body font size (so the engine never silently overflows)."""
+
+
 def paginate(bundles: list[VerseBundle], style: SlideStyle, hang_pt: float | None = None) -> list[SlidePage]:
     """Greedy pagination that keeps each bundle intact on a single slide."""
     max_lines = style.max_body_lines
@@ -391,7 +424,8 @@ def paginate(bundles: list[VerseBundle], style: SlideStyle, hang_pt: float | Non
             current_count = 0
         current.lines.extend(block)
         current_count += wrapped
-        # a single bundle taller than a whole slide sits alone and overflows
+        # a bundle that alone exceeds a slide is isolated on its own page; the
+        # overflow is then eliminated by shrinking in ``fit_pages`` (or reported).
         if current_count > max_lines and current.lines == block:
             pages.append(current)
             current = SlidePage()
@@ -400,6 +434,32 @@ def paginate(bundles: list[VerseBundle], style: SlideStyle, hang_pt: float | Non
     if current.lines:
         pages.append(current)
     return pages
+
+
+def _page_fits(page: SlidePage, style: SlideStyle, hang_pt: float) -> bool:
+    return _block_line_count(page.lines, style, hang_pt) <= style.max_body_lines
+
+
+def fit_pages(
+    bundles: list[VerseBundle], style: SlideStyle,
+) -> tuple[SlideStyle, list[SlidePage], float]:
+    """Paginate ``bundles`` guaranteeing that *no* page overflows the body area.
+
+    Starts from ``style`` (already tidied by :func:`fit_body_style`) and, only
+    if some indivisible bundle still overflows, shrinks the body font further —
+    down to :data:`MIN_BODY_FONT_SIZE` — re-paginating each step. Returns the
+    style/pages/hanging-indent actually used. Raises :class:`PaginationError`
+    if even the minimum size cannot contain a bundle.
+    """
+    for size in range(style.body_font_size, MIN_BODY_FONT_SIZE - 1, -1):
+        trial = replace(style, body_font_size=size)
+        hang = body_hang_pt(bundles, trial)
+        pages = paginate(bundles, trial, hang)
+        if all(_page_fits(pg, trial, hang) for pg in pages):
+            return trial, pages, hang
+    raise PaginationError(
+        "본문 한 절이 너무 길어 최소 글자 크기로도 한 장표에 담을 수 없습니다."
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -412,10 +472,26 @@ class PassageContent:
     bundles: list[VerseBundle]
 
 
-def _set_font(run, name: str, size: int, *, bold: bool = False) -> None:
+def _hex_rgb(color: str) -> RGBColor | None:
+    """Parse ``#rrggbb`` / ``rrggbb`` to an ``RGBColor`` (None if blank/invalid)."""
+    if not color:
+        return None
+    s = color.lstrip("#").strip()
+    if len(s) != 6:
+        return None
+    try:
+        return RGBColor(int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+    except ValueError:
+        return None
+
+
+def _set_font(run, name: str, size: int, *, bold: bool = False, color: str = "") -> None:
     run.font.size = Pt(size)
     run.font.bold = bold
     run.font.name = name
+    rgb = _hex_rgb(color)
+    if rgb is not None:
+        run.font.color.rgb = rgb
     # ensure East-Asian text also uses the chosen family
     rPr = run._r.get_or_add_rPr()
     for tag in ("a:latin", "a:ea", "a:cs"):
@@ -448,7 +524,7 @@ def _set_hanging_indent(p, hang_pt: float) -> None:
 
 def _add_textbox(
     slide, box, text_lines, name, size, *,
-    bold=False, align=PP_ALIGN.LEFT, line_spacing=None, hanging_pt=None,
+    bold=False, color="", align=PP_ALIGN.LEFT, line_spacing=None, hanging_pt=None,
 ):
     left, top, width, height = box
     tb = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
@@ -465,7 +541,7 @@ def _add_textbox(
             _set_hanging_indent(p, hanging_pt)
         run = p.add_run()
         run.text = line
-        _set_font(run, name, size, bold=bold)
+        _set_font(run, name, size, bold=bold, color=color)
     return tb
 
 
@@ -493,24 +569,27 @@ def _render_page(prs, page: SlidePage, passage: PassageContent, style: SlideStyl
         )
 
     title_w = style.title_box[2]
-    has_title = meaningful_title(passage.title)
+    has_title = meaningful_title(passage.title) and style.title_enabled
     if has_title:
         # shrink an over-long title so it never runs past the slide edge
         title_size = _fit_single_line_size(passage.title, title_w, style.title_font_size, MIN_TITLE_FONT_SIZE)
         _add_textbox(slide, style.title_box, [passage.title], style.title_typeface,
-                     title_size, bold=style.title_bold)
-        _add_textbox(slide, style.section_box, [passage.section_info], style.section_typeface,
-                     style.section_font_size, bold=style.section_bold)
-    else:
-        # blank title -> put section info in the title position (task 13)
+                     title_size, bold=style.run_bold(style.title_bold), color=style.title_color)
+        if style.section_enabled:
+            _add_textbox(slide, style.section_box, [passage.section_info], style.section_typeface,
+                         style.section_font_size, bold=style.run_bold(style.section_bold),
+                         color=style.section_color)
+    elif style.section_enabled:
+        # blank/disabled title -> put section info in the title position (task 13)
         sec_size = _fit_single_line_size(passage.section_info, title_w, style.title_font_size, MIN_TITLE_FONT_SIZE)
         _add_textbox(slide, style.title_box, [passage.section_info], style.title_typeface,
-                     sec_size, bold=style.title_bold)
+                     sec_size, bold=style.run_bold(style.title_bold), color=style.section_color)
 
     body_lines = [ln.text for ln in page.lines]
     _add_textbox(
         slide, style.body_box, body_lines, style.typeface, style.body_font_size,
-        bold=style.body_bold,
+        bold=style.run_bold(style.body_bold),
+        color=style.body_color,
         line_spacing=LINE_SPACING,
         hanging_pt=hang_pt,
     )
@@ -527,10 +606,10 @@ def render(
     prs.slide_width = Inches(w)
     prs.slide_height = Inches(h)
     for passage in passages:
-        # auto-fit the body font per passage so verses fill without overflowing
-        passage_style = fit_body_style(passage.bundles, style)
-        hang_pt = body_hang_pt(passage.bundles, passage_style)
-        pages = paginate(passage.bundles, passage_style, hang_pt)
+        # auto-fit the body font per passage so verses fill without overflowing,
+        # then guarantee every page fits (shrinking further / erroring if needed)
+        tidy_style = fit_body_style(passage.bundles, style)
+        passage_style, pages, hang_pt = fit_pages(passage.bundles, tidy_style)
         for page in pages:
             _render_page(prs, page, passage, passage_style, background, hang_pt)
     return prs

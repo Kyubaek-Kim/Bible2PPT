@@ -118,8 +118,15 @@ def user_originals_dir() -> Path:
 
 
 def background_history_dir() -> Path:
-    """Copies of custom backgrounds the user has applied."""
+    """Copies of custom backgrounds the user has registered (originals)."""
     p = user_data_dir() / "backgrounds"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def background_cache_dir() -> Path:
+    """Aspect-cropped renders of the selected background (safe to delete)."""
+    p = user_data_dir() / "backgrounds" / "cache"
     p.mkdir(parents=True, exist_ok=True)
     return p
 

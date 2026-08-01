@@ -174,7 +174,7 @@ def test_body_hanging_indent_and_line_spacing(tmp_path):
     bundle = VerseBundle(coord=Coord("Gen", 1, 1),
                          cells=[("KRV", Cell(status="ok", label="1", text=long_text))])
     style = ppt.SlideStyle(aspect="16:9", font_name="나눔스퀘어 Bold", body_font_size=32)
-    assert style.typeface == "나눔스퀘어" and style.body_bold is True
+    assert style.typeface == "나눔스퀘어 Bold" and style.body_bold is True
 
     prs = ppt.render([ppt.PassageContent("창조", "창세기 1:1", [bundle])], style, None)
     out = ppt.save(prs, tmp_path / "hang.pptx")
@@ -202,8 +202,13 @@ def test_wrap_line_hanging_continuation_is_narrower():
 
 def test_max_body_lines_accounts_for_font_line_height():
     style = ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=32)
-    # 4.6in body height / (32 * 1.3 * 1.2 ≈ 49.9)pt ≈ 6 lines (not the naive 8)
-    assert style.max_body_lines == 6
+    # body height / (32 * 1.3 * 1.15 ≈ 47.8)pt -> a modest, non-overflowing count
+    assert style.max_body_lines == 7
+    # smaller font -> strictly more lines fit; larger font -> fewer
+    assert (
+        ppt.SlideStyle(aspect="16:9", font_name="나눔고딕", body_font_size=20).max_body_lines
+        > style.max_body_lines
+    )
 
 
 def test_fit_body_style_shrinks_to_fit(monkeypatch):
@@ -290,10 +295,9 @@ def test_body_bold_override_and_element_styling():
     assert regular.body_bold is False
     assert ppt.SlideStyle(font_name="나눔고딕", body_bold_opt=True).body_bold is True
     assert ppt.SlideStyle(font_name="나눔스퀘어 Bold", body_bold_opt=False).body_bold is False
-    # per-element font falls back to the body font when unset
-    s = ppt.SlideStyle(font_name="나눔고딕", title_font_name="", section_font_name="맑은 고딕")
-    assert s.title_typeface == "나눔고딕"
-    assert s.section_typeface == "맑은 고딕"
+    # every element shares the one global font face (no stale per-element face)
+    s = ppt.SlideStyle(font_name="맑은 고딕")
+    assert s.typeface == s.title_typeface == s.section_typeface == "맑은 고딕"
 
 
 def test_favorite_translations_order():
@@ -446,3 +450,240 @@ def test_import_register(tmp_path):
     assert "MINE" in reg.codes()
     assert reg.get("MINE").get_verse("Gen", 1, 1) == "나의 번역"
     out.unlink()
+
+
+# --------------------------------------------------------------------------- #
+# Text colours
+# --------------------------------------------------------------------------- #
+def test_text_colors_persist(tmp_path, monkeypatch):
+    from core import paths
+    from core.settings import Settings
+
+    monkeypatch.setattr(paths, "settings_file", lambda: tmp_path / "settings.json")
+    s = Settings()
+    s.title_color, s.section_color, s.body_color = "#ff0000", "#00ff00", "#0000ff"
+    s.save()
+    loaded = Settings.load()
+    assert (loaded.title_color, loaded.section_color, loaded.body_color) == (
+        "#ff0000", "#00ff00", "#0000ff",
+    )
+
+
+def test_ppt_applies_run_colors(tmp_path):
+    import zipfile
+
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    bundle = VerseBundle(coord=Coord("Gen", 1, 1),
+                         cells=[("KRV", Cell(status="ok", label="1", text="빛이 있으라"))])
+    style = ppt.SlideStyle(aspect="16:9", title_color="#ff0000", body_color="#00ff00")
+    prs = ppt.render([ppt.PassageContent("창조", "창세기 1:1", [bundle])], style, None)
+    out = ppt.save(prs, tmp_path / "color.pptx")
+    xml = zipfile.ZipFile(out).read("ppt/slides/slide1.xml").decode()
+    # colours land as solidFill srgbClr values (case-insensitive hex)
+    assert 'srgbClr val="FF0000"' in xml
+    assert 'srgbClr val="00FF00"' in xml
+
+
+def test_hex_rgb_parsing():
+    assert ppt._hex_rgb("") is None
+    assert ppt._hex_rgb("#zzzzzz") is None
+    assert ppt._hex_rgb("#010203") == ppt.RGBColor(1, 2, 3)
+    assert ppt._hex_rgb("010203") == ppt.RGBColor(1, 2, 3)
+
+
+# --------------------------------------------------------------------------- #
+# Title / section enable flags
+# --------------------------------------------------------------------------- #
+def _slide_xml(tmp_path, style, name):
+    import zipfile
+
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    bundle = VerseBundle(coord=Coord("Gen", 1, 1),
+                         cells=[("KRV", Cell(status="ok", label="1", text="빛이 있으라"))])
+    prs = ppt.render([ppt.PassageContent("창조의날", "창세기 1:1", [bundle])], style, None)
+    out = ppt.save(prs, tmp_path / f"{name}.pptx")
+    return zipfile.ZipFile(out).read("ppt/slides/slide1.xml").decode()
+
+
+def test_disabled_title_and_section_are_omitted(tmp_path):
+    both = _slide_xml(tmp_path, ppt.SlideStyle(aspect="16:9"), "both")
+    assert "창조의날" in both and "창세기 1:1" in both
+
+    no_headers = _slide_xml(
+        tmp_path,
+        ppt.SlideStyle(aspect="16:9", title_enabled=False, section_enabled=False),
+        "none",
+    )
+    assert "창조의날" not in no_headers and "창세기 1:1" not in no_headers
+    # body still renders
+    assert "빛이 있으라" in no_headers
+
+
+def test_no_headers_reclaims_body_space():
+    with_headers = ppt.SlideStyle(aspect="16:9")
+    without = ppt.SlideStyle(aspect="16:9", title_enabled=False, section_enabled=False)
+    # hiding the header band gives the body a taller box -> more lines fit
+    assert without.max_body_lines > with_headers.max_body_lines
+
+
+# --------------------------------------------------------------------------- #
+# Background selection / management
+# --------------------------------------------------------------------------- #
+def test_background_options_and_no_duplicate_on_select():
+    from core.settings import Settings
+
+    s = Settings()
+    assert s.background_options() == [("", "background_default")]
+    s.add_background("/data/bg/a.png")
+    s.add_background("/data/bg/b.png")
+    opts = s.background_options()
+    assert opts[0] == ("", "background_default")
+    assert [k for k, _ in opts] == ["", "/data/bg/b.png", "/data/bg/a.png"]
+
+    # "selecting" an existing item never calls add_background, so re-adding the
+    # same path must not grow / duplicate the list
+    s.add_background("/data/bg/a.png")
+    assert [k for k, _ in s.background_options()] == ["", "/data/bg/a.png", "/data/bg/b.png"]
+
+
+def test_background_remove_resets_active_selection():
+    from core import paths
+    from core.settings import Settings
+
+    s = Settings()
+    s.add_background("/data/bg/a.png")
+    s.selected_background = "/data/bg/a.png"
+    s.remove_background("/data/bg/a.png")
+    assert "/data/bg/a.png" not in s.background_history
+    assert s.selected_background == ""  # falls back to default
+    assert s.resolved_background() == paths.default_background()
+
+
+def test_delete_background_removes_file_and_cache(tmp_path, monkeypatch):
+    from core import image_util, paths
+
+    hist = tmp_path / "backgrounds"
+    cache = tmp_path / "backgrounds" / "cache"
+    hist.mkdir(parents=True)
+    cache.mkdir(parents=True)
+    monkeypatch.setattr(paths, "background_history_dir", lambda: hist)
+    monkeypatch.setattr(paths, "background_cache_dir", lambda: cache)
+
+    original = hist / "20240101-000000_pic.png"
+    original.write_bytes(b"x")
+    (cache / "16x9_20240101-000000_pic.png").write_bytes(b"y")
+    (cache / "4x3_20240101-000000_pic.png").write_bytes(b"z")
+
+    image_util.delete_background(original)
+    assert not original.exists()
+    assert list(cache.glob("*")) == []
+
+
+# --------------------------------------------------------------------------- #
+# Font metadata / mapping
+# --------------------------------------------------------------------------- #
+def test_bundled_font_metadata_matches_mapping():
+    # fontTools is a dev-only dependency (font bundling), absent in the runtime
+    # CI job — skip there rather than fail.
+    ttLib = pytest.importorskip("fontTools.ttLib")
+    TTFont = ttLib.TTFont
+
+    from core import fonts
+
+    def korean_family(ttf) -> str:
+        t = TTFont(str(ttf))
+        rec = t["name"].getName(1, 3, 1, 0x412) or t["name"].getName(1, 3, 1, 0x409)
+        return str(rec)
+
+    def weight_class(ttf) -> int:
+        return TTFont(str(ttf))["OS/2"].usWeightClass
+
+    by_label = {f.label: f for f in fonts.curated_fonts()}
+    sqb = by_label["나눔스퀘어 Bold"]
+    sqr = by_label["나눔스퀘어"]
+    ng = by_label["나눔고딕"]
+    ngb = by_label["나눔고딕 Bold"]
+
+    # NanumSquare Bold is a standalone bold family (name carries the weight)
+    assert korean_family(sqb.bundled) == "나눔스퀘어 Bold" == sqb.typeface
+    assert weight_class(sqb.bundled) == 700 and sqb.needs_bold_bit is False
+    # NanumSquare regular is a distinct, lighter family + file
+    assert korean_family(sqr.bundled) == "나눔스퀘어" == sqr.typeface
+    assert weight_class(sqr.bundled) == 400
+    assert sqr.bundled != sqb.bundled
+    # NanumGothic regular/bold share the family but are distinct files/weights
+    assert ng.typeface == ngb.typeface == "나눔고딕"
+    assert ng.bundled != ngb.bundled
+    assert weight_class(ng.bundled) == 400 and weight_class(ngb.bundled) == 700
+    # reaching NanumGothic bold needs the bold bit; NanumSquare Bold does not
+    assert ngb.needs_bold_bit is True
+
+
+def test_stale_per_element_font_cannot_override_global(tmp_path, monkeypatch):
+    # legacy settings.json may carry removed keys (title_font=궁서 etc.); load()
+    # must ignore them so the title can't get stuck on a stale face.
+    import json
+
+    from core import paths
+    from core.settings import Settings
+
+    fp = tmp_path / "settings.json"
+    fp.write_text(json.dumps({
+        "font": "나눔고딕",
+        "title_font": "궁서",
+        "section_font": "궁서",
+        "background": "/old/cropped.png",
+    }), encoding="utf-8")
+    monkeypatch.setattr(paths, "settings_file", lambda: fp)
+    s = Settings.load()
+    assert s.font == "나눔고딕"
+    style = ppt.SlideStyle(font_name=s.font)
+    assert style.title_typeface == style.section_typeface == "나눔고딕"
+
+
+# --------------------------------------------------------------------------- #
+# Pagination: never overflow, better utilisation
+# --------------------------------------------------------------------------- #
+def _verse_bundles(n, text):
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    return [
+        VerseBundle(coord=Coord("Ps", 119, i),
+                    cells=[("KRV", Cell(status="ok", label=str(i), text=text))])
+        for i in range(1, n + 1)
+    ]
+
+
+def test_pagination_no_page_overflows():
+    style = ppt.SlideStyle(aspect="16:9", body_font_size=32)
+    bundles = _verse_bundles(30, "주의 말씀은 내 발에 등이요 내 길에 빛이니이다")
+    fitted, pages, hang = ppt.fit_pages(bundles, ppt.fit_body_style(bundles, style))
+    assert pages
+    for pg in pages:
+        assert ppt._block_line_count(pg.lines, fitted, hang) <= fitted.max_body_lines
+
+
+def test_pagination_packs_multiple_short_verses_per_slide():
+    style = ppt.SlideStyle(aspect="16:9", body_font_size=28)
+    bundles = _verse_bundles(12, "짧은 구절")
+    _fitted, pages, _hang = ppt.fit_pages(bundles, ppt.fit_body_style(bundles, style))
+    # short verses should not each land on their own slide when there is room
+    max_verses_on_a_page = max(len(pg.lines) for pg in pages)
+    assert max_verses_on_a_page >= 3
+
+
+def test_indivisible_oversized_bundle_raises_pagination_error():
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    huge = "이 구절은 아주 길어서 한 장표에 절대 담을 수 없습니다 " * 200
+    bundle = VerseBundle(coord=Coord("Gen", 1, 1),
+                         cells=[("KRV", Cell(status="ok", label="1", text=huge))])
+    style = ppt.SlideStyle(aspect="16:9", body_font_size=32)
+    with pytest.raises(ppt.PaginationError):
+        ppt.fit_pages([bundle], style)

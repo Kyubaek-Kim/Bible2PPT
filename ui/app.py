@@ -12,7 +12,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from core import (
     bible,
@@ -48,6 +48,10 @@ class App(tk.Tk):
         # widgets whose text depends on the UI language: (widget, key)
         self._i18n_widgets: list[tuple[tk.Widget, str]] = []
         self._trans_index_to_code: list[str] = []
+        # text-colour swatches keyed by 'title'/'section'/'body'
+        self._color_swatches: dict[str, tk.Button] = {}
+        # background dropdown option keys, parallel to the combobox values
+        self._bg_option_keys: list[str] = []
 
         self.title(self.i18n.t("app_title"))
         self.geometry(WINDOW_SIZE)
@@ -579,12 +583,22 @@ class App(tk.Tk):
         self.body_bold_chk.grid(row=3, column=1, sticky="w", pady=1)
         self._i18n_widgets.append((self.body_bold_chk, "body_bold"))
 
+        # text colours (title / section / body), shown above the preview
+        self._label(sec, "font_color").pack(anchor="w", padx=6, pady=(6, 0))
+        colors = ttk.Frame(sec)
+        colors.pack(fill="x", padx=6, pady=(0, 2))
+        self._color_button(colors, "customize_title", "title")
+        self._color_button(colors, "customize_section", "section")
+        self._color_button(colors, "customize_body", "body")
+
         # font preview
         self._label(sec, "font_preview").pack(anchor="w", padx=6, pady=(4, 0))
         self.preview_frame = ttk.Frame(sec, relief="solid", borderwidth=1)
         self.preview_frame.pack(fill="x", padx=6, pady=2)
         self.preview_title = tk.Label(self.preview_frame, anchor="w", justify="left")
         self.preview_title.pack(fill="x", padx=6, pady=(4, 0))
+        self.preview_section = tk.Label(self.preview_frame, anchor="w", justify="left")
+        self.preview_section.pack(fill="x", padx=6)
         self.preview_body = tk.Label(self.preview_frame, anchor="w", justify="left", wraplength=360)
         self.preview_body.pack(fill="x", padx=6, pady=(0, 4))
         self.preview_note = ttk.Label(sec, text=self.i18n.t("font_preview_note"), foreground="#888", wraplength=380)
@@ -603,10 +617,60 @@ class App(tk.Tk):
             self.settings.aspect_ratio = self.aspect_var.get()
         if self.size_var.get():
             self.settings.body_font_size = int(self.size_var.get())
+        self._update_font_preview()
 
     def _on_body_bold_change(self) -> None:
         self.settings.body_bold = self.body_bold_var.get()
         self._update_font_preview()
+
+    # -- text colour controls -------------------------------------------- #
+    def _get_color(self, kind: str) -> str:
+        """Stored colour for ``kind`` in {'title','section','body'} ('' = default)."""
+        if kind == "title":
+            return self.settings.title_color
+        if kind == "section":
+            return self.settings.section_color
+        return self.settings.body_color
+
+    def _set_color(self, kind: str, value: str) -> None:
+        if kind == "title":
+            self.settings.title_color = value
+        elif kind == "section":
+            self.settings.section_color = value
+        else:
+            self.settings.body_color = value
+
+    def _color_button(self, parent, label_key: str, kind: str) -> None:
+        """A labelled swatch that opens a colour picker for the ``kind`` colour.
+
+        The swatch fill reflects the current colour; picking updates the setting
+        and the live preview. Buttons for title / section / body sit in a row."""
+        cell = ttk.Frame(parent)
+        cell.pack(side="left", padx=(0, 10))
+        lbl = ttk.Label(cell, text=self.i18n.t(label_key))
+        lbl.pack(side="left", padx=(0, 3))
+        swatch = tk.Button(cell, width=3, relief="groove", takefocus=False)
+        swatch.pack(side="left")
+        swatch.configure(command=lambda: self._pick_color(kind))
+        self._color_swatches[kind] = swatch
+        self._i18n_widgets.append((lbl, label_key))
+
+    def _pick_color(self, kind: str) -> None:
+        _rgb, hexval = colorchooser.askcolor(
+            color=self._preview_color(kind), parent=self
+        )
+        if hexval:
+            self._set_color(kind, hexval)
+            self._refresh_color_swatch(kind)
+            self._update_font_preview()
+
+    def _refresh_color_swatch(self, kind: str) -> None:
+        swatch = self._color_swatches.get(kind)
+        if swatch is not None:
+            swatch.configure(background=self._preview_color(kind))
+
+    def _preview_color(self, kind: str) -> str:
+        return self._get_color(kind) or "#000000"
 
     def _build_style(self) -> ppt.SlideStyle:
         """Assemble a :class:`ppt.SlideStyle` from the current settings,
@@ -617,12 +681,15 @@ class App(tk.Tk):
             font_name=s.font or fonts.default_font_name(),
             body_font_size=s.body_font_size,
             body_bold_opt=s.body_bold,
-            title_font_name=s.title_font,
             title_font_size=s.title_font_size,
             title_bold=s.title_bold,
-            section_font_name=s.section_font,
+            title_enabled=s.title_enabled,
             section_font_size=s.section_font_size,
             section_bold=s.section_bold,
+            section_enabled=s.section_enabled,
+            title_color=s.title_color,
+            section_color=s.section_color,
+            body_color=s.body_color,
             layout_boxes=dict(s.layout_boxes),
         )
 
@@ -633,6 +700,20 @@ class App(tk.Tk):
         self.settings.font = self.font_var.get()
         self._update_font_preview()
 
+    # the preview is a scaled-down mock of a slide; real point sizes are
+    # multiplied by this so their *relative* sizes (title vs. body) show through.
+    PREVIEW_SCALE = 0.45
+
+    def _preview_font(self, family: str | None, size: int, *, bold: bool) -> tkfont.Font:
+        px = max(9, round(size * self.PREVIEW_SCALE))
+        weight = "bold" if bold else "normal"
+        try:
+            if family is None:
+                raise tk.TclError
+            return tkfont.Font(family=family, size=px, weight=weight)
+        except tk.TclError:
+            return tkfont.Font(size=px, weight=weight)
+
     def _update_font_preview(self) -> None:
         name = self.font_var.get() or fonts.default_font_name()
         available, hint = fonts.ensure_font_available(name, self)
@@ -640,19 +721,36 @@ class App(tk.Tk):
         choice = fonts.resolve(name)
         families = fonts.system_font_families(self)
         family = next((f for f in (choice.typeface, choice.label) if f in families), None)
-        body_weight = "bold" if (choice.bold or self.settings.body_bold) else "normal"
-        try:
-            if family is None:
-                raise tk.TclError
-            title_font = tkfont.Font(family=family, size=18, weight="bold")
-            body_font = tkfont.Font(family=family, size=14, weight=body_weight)
-        except tk.TclError:
-            title_font = tkfont.Font(size=18, weight="bold")
-            body_font = tkfont.Font(size=14, weight=body_weight)
-        self.preview_title.configure(text=self.i18n.t("font_preview_sample_title"), font=title_font)
+        s = self.settings
+        body_bold = fonts.run_bold(choice, s.body_bold)
+        title_bold = fonts.run_bold(choice, s.title_bold)
+        section_bold = fonts.run_bold(choice, s.section_bold)
+
+        # title (uses the title size relative to the body size)
+        if s.title_enabled:
+            self.preview_title.configure(
+                text=self.i18n.t("font_preview_sample_title"),
+                font=self._preview_font(family, s.title_font_size, bold=title_bold),
+                fg=self._preview_color("title"),
+            )
+            self.preview_title.pack(fill="x", padx=6, pady=(4, 0), before=self.preview_body)
+        else:
+            self.preview_title.pack_forget()
+
+        if s.section_enabled:
+            self.preview_section.configure(
+                text=self.i18n.t("font_preview_sample_section"),
+                font=self._preview_font(family, s.section_font_size, bold=section_bold),
+                fg=self._preview_color("section"),
+            )
+            self.preview_section.pack(fill="x", padx=6, before=self.preview_body)
+        else:
+            self.preview_section.pack_forget()
+
         self.preview_body.configure(
             text="1. 태초에 하나님이 천지를 창조하시니라 / In the beginning God created the heaven and the earth.",
-            font=body_font,
+            font=self._preview_font(family, s.body_font_size, bold=body_bold),
+            fg=self._preview_color("body"),
         )
 
     # ------------------------------------------------------------------ #
@@ -660,62 +758,96 @@ class App(tk.Tk):
     # ------------------------------------------------------------------ #
     def _build_background_section(self) -> None:
         sec = self._section("background")
+        # attach a new image  +  select from the registered backgrounds  +  manage
+        self._button(sec, "background_custom", self._attach_background).pack(
+            anchor="w", padx=6, pady=(4, 2)
+        )
+        self._label(sec, "background_select").pack(anchor="w", padx=6, pady=(2, 0))
         row = ttk.Frame(sec)
-        row.pack(fill="x", padx=6, pady=4)
-        self._button(row, "background_default", self._use_default_background).pack(side="left")
-        self._button(row, "background_custom", self._attach_background).pack(side="left", padx=4)
-        self.bg_label = ttk.Label(sec, text="", foreground="#555", wraplength=380)
-        self.bg_label.pack(anchor="w", padx=6)
-
-        self._label(sec, "background_history").pack(anchor="w", padx=6, pady=(4, 0))
-        self.bg_hist_var = tk.StringVar()
-        self.bg_hist_combo = ttk.Combobox(sec, state="readonly", textvariable=self.bg_hist_var)
-        self.bg_hist_combo.pack(fill="x", padx=6, pady=(0, 4))
-        self.bg_hist_combo.bind("<<ComboboxSelected>>", lambda e: self._on_history_background())
+        row.pack(fill="x", padx=6, pady=(0, 2))
+        self.bg_select_var = tk.StringVar()
+        self.bg_select_combo = ttk.Combobox(
+            row, state="readonly", textvariable=self.bg_select_var
+        )
+        self.bg_select_combo.pack(side="left", fill="x", expand=True)
+        self.bg_select_combo.bind("<<ComboboxSelected>>", lambda e: self._on_select_background())
+        self._button(row, "background_manage", self._open_background_manager).pack(
+            side="left", padx=(4, 0)
+        )
 
     def _slide_cm(self) -> tuple[float, float]:
         w_in, h_in = ppt.ASPECT_RATIOS[self.settings.aspect_ratio]
         return w_in * 2.54, h_in * 2.54
 
-    def _use_default_background(self) -> None:
-        self.settings.background = ""
-        self._refresh_background_label()
+    def _bg_display(self, key: str, name_key_or_name: str) -> str:
+        """Default option is localized; custom entries show their file name."""
+        return self.i18n.t("background_default") if key == "" else name_key_or_name
 
-    def _apply_background_with_confirm(self, source: str) -> None:
+    def _refresh_background_combo(self) -> None:
+        options = self.settings.background_options()
+        self._bg_option_keys = [k for k, _ in options]
+        self.bg_select_combo.configure(
+            values=[self._bg_display(k, n) for k, n in options]
+        )
+        sel = self.settings.selected_background
+        idx = self._bg_option_keys.index(sel) if sel in self._bg_option_keys else 0
+        self.bg_select_combo.current(idx)
+
+    def _confirm_crop(self, source: str) -> bool:
+        """Warn (확인/취소) how much of ``source`` is cropped for the current
+        aspect. True when the user confirms (or no crop needed)."""
         w_cm, h_cm = self._slide_cm()
         plan = image_util.plan_crop(source, w_cm, h_cm)
-        if plan.needs_crop:
-            axis = "상/하" if plan.axis == "vertical" else "좌/우"
-            msg = self.i18n.t("crop_confirm_body", axis=axis, px=plan.crop_px, cm=plan.crop_cm)
-            if not messagebox.askokcancel(self.i18n.t("crop_confirm_title"), msg):
-                return
-        stored = image_util.add_to_history(source)
-        cropped = paths.background_history_dir() / f"cropped_{stored.name}"
-        image_util.apply_crop(source, plan, cropped)
-        self.settings.background = str(cropped)
-        self.settings.add_background_history(str(stored))
-        self._refresh_background_label()
-        self._refresh_background_history()
+        if not plan.needs_crop:
+            return True
+        axis = "상/하" if plan.axis == "vertical" else "좌/우"
+        msg = self.i18n.t("crop_confirm_body", axis=axis, px=plan.crop_px, cm=plan.crop_cm)
+        return messagebox.askokcancel(self.i18n.t("crop_confirm_title"), msg)
 
     def _attach_background(self) -> None:
+        """Attach (import) a new image: copy into AppData, register it once, and
+        select it after a crop confirmation."""
         path = filedialog.askopenfilename(
             filetypes=[("Image", "*.png *.jpg *.jpeg *.bmp *.gif"), ("All", "*.*")]
         )
-        if path:
-            self._apply_background_with_confirm(path)
+        if not path:
+            return
+        if not self._confirm_crop(path):
+            return
+        stored = image_util.add_to_history(path)
+        self.settings.add_background(str(stored))
+        self.settings.selected_background = str(stored)
+        self._refresh_background_combo()
 
-    def _on_history_background(self) -> None:
-        idx = self.bg_hist_combo.current()
-        if 0 <= idx < len(self.settings.background_history):
-            self._apply_background_with_confirm(self.settings.background_history[idx])
+    def _on_select_background(self) -> None:
+        """Select an already-registered background (never re-imports/duplicates)."""
+        idx = self.bg_select_combo.current()
+        if not (0 <= idx < len(self._bg_option_keys)):
+            return
+        key = self._bg_option_keys[idx]
+        if key == self.settings.selected_background:
+            return
+        if key and not self._confirm_crop(key):
+            self._refresh_background_combo()  # revert combo to the current selection
+            return
+        self.settings.selected_background = key
+        self._refresh_background_combo()
 
-    def _refresh_background_history(self) -> None:
-        self.bg_hist_combo.configure(
-            values=[Path(p).name for p in self.settings.background_history]
-        )
+    def _open_background_manager(self) -> None:
+        BackgroundManager(self)
 
-    def _refresh_background_label(self) -> None:
-        self.bg_label.configure(text=str(self.settings.resolved_background()))
+    def _render_background(self) -> Path | None:
+        """The background to embed: the selected original cropped to the current
+        aspect (cached), or None when the file is missing."""
+        original = self.settings.resolved_background()
+        if not original.exists():
+            return None
+        w_cm, h_cm = self._slide_cm()
+        plan = image_util.plan_crop(str(original), w_cm, h_cm)
+        aspect_tag = self.settings.aspect_ratio.replace(":", "x")
+        cached = paths.background_cache_dir() / f"{aspect_tag}_{original.name}"
+        image_util.apply_crop(str(original), plan, cached)
+        return cached
 
     # ------------------------------------------------------------------ #
     # Output folder
@@ -774,7 +906,7 @@ class App(tk.Tk):
                 registry=self.registry,
                 translation_codes=codes,
                 style=style,
-                background=self.settings.resolved_background(),
+                background=self._render_background(),
                 output_folder=self.settings.resolved_output_folder(),
                 mode=self.settings.generate_mode,
                 i18n=self.i18n,
@@ -813,8 +945,9 @@ class App(tk.Tk):
         self.font_var.set(self.settings.font or fonts.default_font_name())
         self.size_var.set(str(self.settings.body_font_size))
         self.mode_var.set(self.settings.generate_mode)
-        self._refresh_background_label()
-        self._refresh_background_history()
+        self._refresh_background_combo()
+        for kind in ("title", "section", "body"):
+            self._refresh_color_swatch(kind)
         self._refresh_output_label()
         self._refresh_passage_list()
         self._update_font_preview()
@@ -963,12 +1096,12 @@ class LayoutDialog(tk.Toplevel):
         s = self.settings
         # explicit per-element typography vars (no dynamic attribute access)
         self._title_vars = self._build_element_controls(
-            right, "customize_title", s.title_font_size, s.title_bold,
-            on_change=self._refresh_fonts,
+            right, "customize_title", s.title_font_size, s.title_bold, s.title_enabled,
+            on_change=self._refresh_preview,
         )
         self._section_vars = self._build_element_controls(
-            right, "customize_section", s.section_font_size, s.section_bold,
-            on_change=self._refresh_fonts,
+            right, "customize_section", s.section_font_size, s.section_bold, s.section_enabled,
+            on_change=self._refresh_preview,
         )
 
         # draw after the typography vars exist so the preview text can use them
@@ -985,6 +1118,13 @@ class LayoutDialog(tk.Toplevel):
         base.update({k: list(v) for k, v in self.settings.layout_boxes.items()})
         return base
 
+    def _element_enabled(self, key: str) -> bool:
+        if key == "title":
+            return bool(self._title_vars["enabled"].get())
+        if key == "section":
+            return bool(self._section_vars["enabled"].get())
+        return True  # body is always present
+
     def _draw_boxes(self, fractions: dict[str, list[float]]) -> None:
         self.canvas.delete("all")
         self._rects = {}
@@ -999,10 +1139,11 @@ class LayoutDialog(tk.Toplevel):
                 (x0 + x1) / 2, (y0 + y1) / 2, text=self.i18n.t(f"customize_{key}"),
                 fill=colour, font=self._canvas_font(*self._element_style(key)),
             )
-            self._rects[key] = {"rect": rid, "text": tid}
+            self._rects[key] = {"rect": rid, "text": tid, "colour": colour}
             for item in (rid, tid):
                 self.canvas.tag_bind(item, "<Button-1>", lambda e, k=key: self._press(e, k))
                 self.canvas.tag_bind(item, "<B1-Motion>", self._motion)
+        self._refresh_enabled()
 
     def _element_style(self, key: str) -> tuple[str, int, bool]:
         """Return (font_name, size_pt, bold) for a preview box.
@@ -1039,8 +1180,22 @@ class LayoutDialog(tk.Toplevel):
         except tk.TclError:
             return tkfont.Font(size=-px, weight=weight)
 
-    def _refresh_fonts(self) -> None:
-        """Re-apply preview fonts live when a typography control changes,
+    def _refresh_enabled(self) -> None:
+        """Grey out (and mark) the title/section boxes when disabled so the
+        canvas mirrors what the generated slide will contain."""
+        for key, _ in _LAYOUT_KEYS:
+            if key not in self._rects:
+                continue
+            enabled = self._element_enabled(key)
+            colour = self._rects[key]["colour"] if enabled else "#bbbbbb"
+            label = self.i18n.t(f"customize_{key}")
+            if not enabled:
+                label = f"{label} ({self.i18n.t('customize_disabled')})"
+            self.canvas.itemconfigure(self._rects[key]["rect"], outline=colour, fill=colour)
+            self.canvas.itemconfigure(self._rects[key]["text"], fill=colour, text=label)
+
+    def _refresh_preview(self) -> None:
+        """Re-apply preview fonts and enabled-state live when a control changes,
         keeping any in-progress box positions."""
         for key, _ in _LAYOUT_KEYS:
             if key in self._rects:
@@ -1048,6 +1203,7 @@ class LayoutDialog(tk.Toplevel):
                     self._rects[key]["text"],
                     font=self._canvas_font(*self._element_style(key)),
                 )
+        self._refresh_enabled()
 
     def _press(self, event, key: str) -> None:
         self._drag = (key, event.x, event.y)
@@ -1070,27 +1226,30 @@ class LayoutDialog(tk.Toplevel):
 
     # -- element font controls ------------------------------------------- #
     def _build_element_controls(
-        self, parent, title_key: str, size: int, bold: bool,
+        self, parent, title_key: str, size: int, bold: bool, enabled: bool,
         on_change: Callable[[], None],
     ) -> dict[str, tk.Variable]:
-        """Build a size/bold control group; return its two Tk vars.
+        """Build an 활성화 / size / bold control group; return its Tk vars.
 
         The font face is intentionally *not* selectable here: it is governed by
         the 화면 설정 글자체 for every element. ``on_change`` fires whenever a
         control changes so the preview can update live."""
         frame = ttk.LabelFrame(parent, text=self.i18n.t(title_key))
         frame.pack(fill="x", pady=(0, 8))
+        enabled_var = tk.BooleanVar(value=enabled)
         size_var = tk.StringVar(value=str(size))
         bold_var = tk.BooleanVar(value=bold)
 
-        ttk.Label(frame, text=self.i18n.t("body_font_size")).grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Checkbutton(frame, text=self.i18n.t("customize_enabled"), variable=enabled_var,
+                        command=on_change).grid(row=0, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+        ttk.Label(frame, text=self.i18n.t("body_font_size")).grid(row=1, column=0, sticky="w", padx=4, pady=2)
         size_combo = ttk.Combobox(frame, state="readonly", width=8, textvariable=size_var,
                                   values=[str(s) for s in FONT_SIZES])
-        size_combo.grid(row=0, column=1, sticky="w", pady=2)
+        size_combo.grid(row=1, column=1, sticky="w", pady=2)
         ttk.Checkbutton(frame, text=self.i18n.t("bold"), variable=bold_var,
-                        command=on_change).grid(row=1, column=1, sticky="w", pady=2)
+                        command=on_change).grid(row=2, column=1, sticky="w", pady=2)
         size_combo.bind("<<ComboboxSelected>>", lambda e: on_change())
-        return {"size": size_var, "bold": bold_var}
+        return {"enabled": enabled_var, "size": size_var, "bold": bold_var}
 
     @staticmethod
     def _size_of(var: tk.Variable, fallback: int) -> int:
@@ -1103,15 +1262,15 @@ class LayoutDialog(tk.Toplevel):
     def _save(self) -> None:
         s = self.settings
         s.layout_boxes = {k: self._fraction_of(k) for k, _ in _LAYOUT_KEYS}
-        # font face is governed by 화면 설정; keep per-element font empty so it
-        # follows the body font
-        s.title_font = ""
+        # font face is governed by 화면 설정; only size / bold / visibility differ
         s.title_font_size = self._size_of(self._title_vars["size"], s.title_font_size)
         s.title_bold = bool(self._title_vars["bold"].get())
-        s.section_font = ""
+        s.title_enabled = bool(self._title_vars["enabled"].get())
         s.section_font_size = self._size_of(self._section_vars["size"], s.section_font_size)
         s.section_bold = bool(self._section_vars["bold"].get())
+        s.section_enabled = bool(self._section_vars["enabled"].get())
         s.save()
+        self.app._update_font_preview()
         if messagebox.askyesno(self.i18n.t("done"), self.i18n.t("customize_saved")):
             self.destroy()
 
@@ -1119,14 +1278,86 @@ class LayoutDialog(tk.Toplevel):
         d = Settings()  # engine defaults
         s = self.settings
         s.layout_boxes = {}
-        s.title_font, s.title_font_size, s.title_bold = "", d.title_font_size, d.title_bold
-        s.section_font, s.section_font_size, s.section_bold = "", d.section_font_size, d.section_bold
+        s.title_font_size, s.title_bold, s.title_enabled = d.title_font_size, d.title_bold, d.title_enabled
+        s.section_font_size, s.section_bold, s.section_enabled = (
+            d.section_font_size, d.section_bold, d.section_enabled
+        )
         self._title_vars["size"].set(str(d.title_font_size))
         self._title_vars["bold"].set(d.title_bold)
+        self._title_vars["enabled"].set(d.title_enabled)
         self._section_vars["size"].set(str(d.section_font_size))
         self._section_vars["bold"].set(d.section_bold)
+        self._section_vars["enabled"].set(d.section_enabled)
         s.save()
         self._draw_boxes(self._current_fractions())
+        self.app._update_font_preview()
+
+
+class BackgroundManager(tk.Toplevel):
+    """Compact popup to batch-delete registered backgrounds.
+
+    The main window keeps only the space-efficient 배경 선택 dropdown; deletion
+    lives here as a checkbox list so several images can be removed at once. The
+    built-in 기본 배경 is shown locked (no checkbox) and can never be deleted.
+    Deleting removes both the settings entry and the file under AppData.
+    """
+
+    def __init__(self, master: App) -> None:
+        super().__init__(master)
+        self.app = master
+        self.i18n = master.i18n
+        self.settings = master.settings
+
+        self.title(self.i18n.t("background_manage_title"))
+        self.geometry("420x360")
+        self.transient(master)
+
+        ttk.Label(self, text=self.i18n.t("background_manage_hint"),
+                  foreground="#666", wraplength=390, justify="left").pack(
+            anchor="w", padx=10, pady=(10, 4))
+
+        self._body = ttk.Frame(self)
+        self._body.pack(fill="both", expand=True, padx=10)
+        self._vars: list[tuple[str, tk.BooleanVar]] = []
+        self._build_rows()
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", padx=10, pady=10)
+        ttk.Button(btns, text=self.i18n.t("background_delete_selected"),
+                   command=self._delete_selected).pack(side="left")
+        ttk.Button(btns, text=self.i18n.t("close"), command=self.destroy).pack(side="right")
+
+    def _build_rows(self) -> None:
+        for child in self._body.winfo_children():
+            child.destroy()
+        self._vars = []
+        # locked default row
+        ttk.Label(self._body, text=f"🔒 {self.i18n.t('background_default')}",
+                  foreground="#888").pack(anchor="w", pady=2)
+        for path in self.settings.background_history:
+            var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(self._body, text=Path(path).name, variable=var).pack(anchor="w", pady=2)
+            self._vars.append((path, var))
+        if not self._vars:
+            ttk.Label(self._body, text=self.i18n.t("background_manage_empty"),
+                      foreground="#aaa").pack(anchor="w", pady=6)
+
+    def _delete_selected(self) -> None:
+        targets = [p for p, v in self._vars if v.get()]
+        if not targets:
+            return
+        if not messagebox.askyesno(
+            self.i18n.t("background_manage_title"),
+            self.i18n.t("background_delete_confirm", count=len(targets)),
+            parent=self,
+        ):
+            return
+        for path in targets:
+            image_util.delete_background(path)
+            self.settings.remove_background(path)
+        self.settings.save()
+        self.app._refresh_background_combo()
+        self._build_rows()
 
 
 def run() -> None:
