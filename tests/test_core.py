@@ -587,7 +587,10 @@ def test_delete_background_removes_file_and_cache(tmp_path, monkeypatch):
 # Font metadata / mapping
 # --------------------------------------------------------------------------- #
 def test_bundled_font_metadata_matches_mapping():
-    from fontTools.ttLib import TTFont
+    # fontTools is a dev-only dependency (font bundling), absent in the runtime
+    # CI job — skip there rather than fail.
+    ttLib = pytest.importorskip("fontTools.ttLib")
+    TTFont = ttLib.TTFont
 
     from core import fonts
 
