@@ -14,6 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
+from PIL import Image, ImageTk
+
 from core import (
     bible,
     fonts,
@@ -52,6 +54,9 @@ class App(tk.Tk):
         self._color_swatches: dict[str, tk.Button] = {}
         # background dropdown option keys, parallel to the combobox values
         self._bg_option_keys: list[str] = []
+        # the open layout-customizer window, if any (kept so its faded
+        # background can follow live 배경 selection changes)
+        self._layout_dialog: LayoutDialog | None = None
 
         self.title(self.i18n.t("app_title"))
         self.geometry(WINDOW_SIZE)
@@ -694,7 +699,16 @@ class App(tk.Tk):
         )
 
     def _open_layout_dialog(self) -> None:
+        if self._layout_dialog is not None and self._layout_dialog.winfo_exists():
+            self._layout_dialog.lift()
+            return
         LayoutDialog(self)
+
+    def _notify_background_changed(self) -> None:
+        """Refresh the customizer's faded background if it is open."""
+        dlg = self._layout_dialog
+        if dlg is not None and dlg.winfo_exists():
+            dlg.refresh_background()
 
     def _on_font_change(self) -> None:
         self.settings.font = self.font_var.get()
@@ -818,6 +832,7 @@ class App(tk.Tk):
         self.settings.add_background(str(stored))
         self.settings.selected_background = str(stored)
         self._refresh_background_combo()
+        self._notify_background_changed()
 
     def _on_select_background(self) -> None:
         """Select an already-registered background (never re-imports/duplicates)."""
@@ -832,6 +847,7 @@ class App(tk.Tk):
             return
         self.settings.selected_background = key
         self._refresh_background_combo()
+        self._notify_background_changed()
 
     def _open_background_manager(self) -> None:
         BackgroundManager(self)
@@ -1052,13 +1068,27 @@ _LAYOUT_KEYS = (("title", "#c0392b"), ("section", "#2980b9"), ("body", "#27ae60"
 _CANVAS_W = 380  # px; height follows the slide aspect
 
 
-class LayoutDialog(tk.Toplevel):
-    """Drag-and-drop editor for the slide layout (item 6).
+_MIN_BOX_PX = 26          # a box may not be shrunk below this in either axis
+_HANDLE = 7               # half-size of a corner resize handle (px)
+# corner -> (which x edge, which y edge) it moves, and the hover cursor
+_CORNERS = {
+    "nw": (0, 1, "top_left_corner"),
+    "ne": (2, 1, "top_right_corner"),
+    "sw": (0, 3, "bottom_left_corner"),
+    "se": (2, 3, "bottom_right_corner"),
+}
 
-    Shows the title / reference / body boxes as draggable rectangles laid over
-    a slide-shaped canvas for the current aspect ratio, plus font / size / bold
-    controls for the title and reference. "저장" persists the arrangement so all
-    subsequent PPTs use it; "초기화" restores the original engine layout.
+
+class LayoutDialog(tk.Toplevel):
+    """Drag-and-drop + resize editor for the slide layout.
+
+    Shows the title / reference / body boxes as rectangles laid over a
+    slide-shaped canvas (with the current background faded behind them) for the
+    active aspect ratio, plus size / bold / 활성화 controls for the title and
+    reference. Boxes can be *moved* (drag the body) and *resized* (drag a corner
+    handle — the cursor turns into a diagonal double-arrow). "저장" persists the
+    arrangement so all subsequent PPTs use those exact regions; "초기화" restores
+    the original engine layout. Live warnings flag overlaps / too-small regions.
     """
 
     def __init__(self, master: App) -> None:
@@ -1068,7 +1098,7 @@ class LayoutDialog(tk.Toplevel):
         self.settings = master.settings
 
         self.title(self.i18n.t("customize_layout"))
-        self.geometry("640x520")
+        self.geometry("660x560")
 
         self._style = master._build_style()
         w_in, h_in = ppt.ASPECT_RATIOS.get(self.settings.aspect_ratio, ppt.ASPECT_RATIOS["16:9"])
@@ -1087,9 +1117,15 @@ class LayoutDialog(tk.Toplevel):
                                 background="#f4f4f4", highlightthickness=1,
                                 highlightbackground="#bbb")
         self.canvas.pack(pady=4)
+        # live layout warnings (overlap / too small); empty when the layout is ok
+        self.warn_label = ttk.Label(left, text="", foreground="#c0392b",
+                                    wraplength=self._cw, justify="left")
+        self.warn_label.pack(anchor="w")
 
-        self._rects: dict[str, dict] = {}
-        self._drag: tuple | None = None
+        # box geometry model in canvas px: {key: [x0, y0, x1, y1]}
+        self._boxes: dict[str, list[float]] = {}
+        self._bg_photo: ImageTk.PhotoImage | None = None
+        self._drag: tuple | None = None  # (key, mode, corner|None, last_x, last_y)
 
         right = ttk.Frame(wrap)
         right.pack(side="left", fill="both", expand=True, padx=(12, 0))
@@ -1104,19 +1140,38 @@ class LayoutDialog(tk.Toplevel):
             on_change=self._refresh_preview,
         )
 
-        # draw after the typography vars exist so the preview text can use them
-        self._draw_boxes(self._current_fractions())
+        # seed the model from the current fractions, then paint
+        fr = self._current_fractions()
+        self._boxes = {k: self._fr_to_px(fr[k]) for k, _ in _LAYOUT_KEYS}
+        self._draw_background()
+        self._redraw_overlay()
 
         btns = ttk.Frame(right)
         btns.pack(anchor="w", pady=(12, 0))
         ttk.Button(btns, text=self.i18n.t("save"), command=self._save).pack(side="left")
         ttk.Button(btns, text=self.i18n.t("reset"), command=self._reset).pack(side="left", padx=6)
 
-    # -- fractions / drawing --------------------------------------------- #
+        # let the App refresh our background live when the user changes it
+        self.app._layout_dialog = self
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self) -> None:
+        self.app._layout_dialog = None
+        self.destroy()
+
+    # -- fractions / geometry -------------------------------------------- #
     def _current_fractions(self) -> dict[str, list[float]]:
         base = self._style.default_layout_fractions()
         base.update({k: list(v) for k, v in self.settings.layout_boxes.items()})
         return base
+
+    def _fr_to_px(self, fr: list[float]) -> list[float]:
+        x, y, w, h = fr
+        return [x * self._cw, y * self._ch, (x + w) * self._cw, (y + h) * self._ch]
+
+    def _fraction_of(self, key: str) -> list[float]:
+        x0, y0, x1, y1 = self._boxes[key]
+        return [x0 / self._cw, y0 / self._ch, (x1 - x0) / self._cw, (y1 - y0) / self._ch]
 
     def _element_enabled(self, key: str) -> bool:
         if key == "title":
@@ -1125,25 +1180,68 @@ class LayoutDialog(tk.Toplevel):
             return bool(self._section_vars["enabled"].get())
         return True  # body is always present
 
-    def _draw_boxes(self, fractions: dict[str, list[float]]) -> None:
-        self.canvas.delete("all")
-        self._rects = {}
+    # -- background ------------------------------------------------------ #
+    def _draw_background(self) -> None:
+        """Paint the currently-selected background, faded to 20% opacity, so the
+        boxes stay readable. Follows the main window's background live."""
+        self.canvas.delete("bg")
+        self._bg_photo = None
+        src = self.app._render_background()
+        if src is None or not Path(src).exists():
+            return
+        try:
+            img = Image.open(src).convert("RGB").resize((self._cw, self._ch))
+        except OSError:
+            return
+        # blend toward white: 20% of the image + 80% white == 80% transparency
+        faded = Image.blend(Image.new("RGB", img.size, "white"), img, 0.2)
+        self._bg_photo = ImageTk.PhotoImage(faded)
+        self.canvas.create_image(0, 0, anchor="nw", image=self._bg_photo, tags="bg")
+
+    def refresh_background(self) -> None:
+        """Called by the App when the selected background changes."""
+        self._draw_background()
+        self._redraw_overlay()
+
+    # -- overlay (boxes + handles) --------------------------------------- #
+    def _redraw_overlay(self) -> None:
+        self.canvas.delete("ov")
         for key, colour in _LAYOUT_KEYS:
-            x, y, w, h = fractions[key]
-            x0, y0 = x * self._cw, y * self._ch
-            x1, y1 = x0 + w * self._cw, y0 + h * self._ch
+            enabled = self._element_enabled(key)
+            draw_colour = colour if enabled else "#b0b0b0"
+            x0, y0, x1, y1 = self._boxes[key]
             rid = self.canvas.create_rectangle(
-                x0, y0, x1, y1, outline=colour, width=2, fill=colour, stipple="gray12",
+                x0, y0, x1, y1, outline=draw_colour, width=2,
+                fill=draw_colour, stipple="gray12", tags=("ov", f"box:{key}"),
             )
+            label = self.i18n.t(f"customize_{key}")
+            if not enabled:
+                label = f"{label} ({self.i18n.t('customize_disabled')})"
             tid = self.canvas.create_text(
-                (x0 + x1) / 2, (y0 + y1) / 2, text=self.i18n.t(f"customize_{key}"),
-                fill=colour, font=self._canvas_font(*self._element_style(key)),
+                (x0 + x1) / 2, (y0 + y1) / 2, text=label, fill=draw_colour,
+                font=self._canvas_font(*self._element_style(key)), tags=("ov", f"box:{key}"),
             )
-            self._rects[key] = {"rect": rid, "text": tid, "colour": colour}
             for item in (rid, tid):
-                self.canvas.tag_bind(item, "<Button-1>", lambda e, k=key: self._press(e, k))
+                self.canvas.tag_bind(item, "<Button-1>", lambda e, k=key: self._press_move(e, k))
                 self.canvas.tag_bind(item, "<B1-Motion>", self._motion)
-        self._refresh_enabled()
+                self.canvas.tag_bind(item, "<ButtonRelease-1>", self._release)
+                self.canvas.tag_bind(item, "<Enter>", lambda e: self.canvas.configure(cursor="fleur"))
+                self.canvas.tag_bind(item, "<Leave>", lambda e: self.canvas.configure(cursor=""))
+            # corner resize handles
+            for corner, (ix, iy, cursor) in _CORNERS.items():
+                hx, hy = self._boxes[key][ix], self._boxes[key][iy]
+                hid = self.canvas.create_rectangle(
+                    hx - _HANDLE, hy - _HANDLE, hx + _HANDLE, hy + _HANDLE,
+                    outline=draw_colour, fill="white", width=1, tags=("ov", f"box:{key}"),
+                )
+                self.canvas.tag_bind(hid, "<Button-1>",
+                                     lambda e, k=key, c=corner: self._press_resize(e, k, c))
+                self.canvas.tag_bind(hid, "<B1-Motion>", self._motion)
+                self.canvas.tag_bind(hid, "<ButtonRelease-1>", self._release)
+                self.canvas.tag_bind(hid, "<Enter>",
+                                     lambda e, cur=cursor: self.canvas.configure(cursor=cur))
+                self.canvas.tag_bind(hid, "<Leave>", lambda e: self.canvas.configure(cursor=""))
+        self._validate()
 
     def _element_style(self, key: str) -> tuple[str, int, bool]:
         """Return (font_name, size_pt, bold) for a preview box.
@@ -1180,49 +1278,91 @@ class LayoutDialog(tk.Toplevel):
         except tk.TclError:
             return tkfont.Font(size=-px, weight=weight)
 
-    def _refresh_enabled(self) -> None:
-        """Grey out (and mark) the title/section boxes when disabled so the
-        canvas mirrors what the generated slide will contain."""
-        for key, _ in _LAYOUT_KEYS:
-            if key not in self._rects:
-                continue
-            enabled = self._element_enabled(key)
-            colour = self._rects[key]["colour"] if enabled else "#bbbbbb"
-            label = self.i18n.t(f"customize_{key}")
-            if not enabled:
-                label = f"{label} ({self.i18n.t('customize_disabled')})"
-            self.canvas.itemconfigure(self._rects[key]["rect"], outline=colour, fill=colour)
-            self.canvas.itemconfigure(self._rects[key]["text"], fill=colour, text=label)
-
     def _refresh_preview(self) -> None:
-        """Re-apply preview fonts and enabled-state live when a control changes,
-        keeping any in-progress box positions."""
-        for key, _ in _LAYOUT_KEYS:
-            if key in self._rects:
-                self.canvas.itemconfigure(
-                    self._rects[key]["text"],
-                    font=self._canvas_font(*self._element_style(key)),
-                )
-        self._refresh_enabled()
+        """Re-apply preview fonts and enabled-state live when a control changes."""
+        self._redraw_overlay()
 
-    def _press(self, event, key: str) -> None:
-        self._drag = (key, event.x, event.y)
+    # -- move / resize interaction --------------------------------------- #
+    def _press_move(self, event, key: str) -> None:
+        self._drag = (key, "move", None, event.x, event.y)
+
+    def _press_resize(self, event, key: str, corner: str) -> None:
+        self._drag = (key, "resize", corner, event.x, event.y)
 
     def _motion(self, event) -> None:
         if not self._drag:
             return
-        key, px, py = self._drag
-        rid = self._rects[key]["rect"]
-        x0, y0, x1, y1 = self.canvas.coords(rid)
-        dx = max(-x0, min(event.x - px, self._cw - x1))
-        dy = max(-y0, min(event.y - py, self._ch - y1))
-        self.canvas.move(rid, dx, dy)
-        self.canvas.move(self._rects[key]["text"], dx, dy)
-        self._drag = (key, event.x, event.y)
+        key, mode, corner, px, py = self._drag
+        dx, dy = event.x - px, event.y - py
+        box = self._boxes[key]
+        if mode == "move":
+            dx = max(-box[0], min(dx, self._cw - box[2]))
+            dy = max(-box[1], min(dy, self._ch - box[3]))
+            self._boxes[key] = [box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy]
+        else:
+            ix, iy, _ = _CORNERS[corner]
+            nx = min(max(box[ix] + dx, 0), self._cw)
+            ny = min(max(box[iy] + dy, 0), self._ch)
+            new = list(box)
+            new[ix], new[iy] = nx, ny
+            # keep min size by clamping the moved edge, not flipping the box
+            if abs(new[2] - new[0]) >= _MIN_BOX_PX:
+                box[ix] = nx
+            if abs(new[3] - new[1]) >= _MIN_BOX_PX:
+                box[iy] = ny
+        self._drag = (key, mode, corner, event.x, event.y)
+        self._redraw_overlay()
 
-    def _fraction_of(self, key: str) -> list[float]:
-        x0, y0, x1, y1 = self.canvas.coords(self._rects[key]["rect"])
-        return [x0 / self._cw, y0 / self._ch, (x1 - x0) / self._cw, (y1 - y0) / self._ch]
+    def _release(self, event) -> None:
+        self._drag = None
+
+    # -- validation ------------------------------------------------------ #
+    def _validate(self) -> list[str]:
+        """Collect and display warnings; return them. Advisory only — the engine
+        still guarantees no slide overflow regardless of these regions."""
+        warns: list[str] = []
+
+        # the critical rule: the body must not intrude into an enabled header.
+        # (the title/reference bands may share a little vertical space by design,
+        # so only body-vs-header overlaps are flagged.)
+        for header in ("title", "section"):
+            if self._element_enabled(header) and self._overlap(
+                self._boxes["body"], self._boxes[header]
+            ):
+                warns.append(self.i18n.t(
+                    "customize_warn_overlap",
+                    a=self.i18n.t("customize_body"), b=self.i18n.t(f"customize_{header}"),
+                ))
+
+        # body too small to hold even two lines at the current body size
+        trial = ppt.SlideStyle(
+            aspect=self.settings.aspect_ratio,
+            font_name=self.settings.font or fonts.default_font_name(),
+            body_font_size=self.settings.body_font_size,
+            layout_boxes={"body": self._fraction_of("body")},
+        )
+        if trial.max_body_lines < 2 or trial.max_units_per_line < 6:
+            warns.append(self.i18n.t("customize_warn_body_small"))
+
+        # a header box shorter than its own font can clip the text
+        for key, vars_ in (("title", self._title_vars), ("section", self._section_vars)):
+            if not self._element_enabled(key):
+                continue
+            _, _, _, bh = self._fraction_of(key)
+            box_h_pt = bh * self._ch / self._scale * ppt.IN_TO_PT
+            font_pt = self._size_of(vars_["size"], 24)
+            if box_h_pt < font_pt * 1.1:
+                warns.append(self.i18n.t(
+                    "customize_warn_box_small", el=self.i18n.t(f"customize_{key}")))
+
+        self.warn_label.configure(text="\n".join(warns))
+        return warns
+
+    @staticmethod
+    def _overlap(a: list[float], b: list[float]) -> bool:
+        pad = 1.0  # ignore hairline touching
+        return not (a[2] - pad <= b[0] or b[2] - pad <= a[0]
+                    or a[3] - pad <= b[1] or b[3] - pad <= a[1])
 
     # -- element font controls ------------------------------------------- #
     def _build_element_controls(
@@ -1260,6 +1400,13 @@ class LayoutDialog(tk.Toplevel):
 
     # -- save / reset ---------------------------------------------------- #
     def _save(self) -> None:
+        # if the layout is risky, warn once and let the user decide
+        warns = self._validate()
+        if warns and not messagebox.askyesno(
+            self.i18n.t("customize_warn_title"),
+            "\n".join(warns) + "\n\n" + self.i18n.t("customize_warn_confirm"),
+        ):
+            return
         s = self.settings
         s.layout_boxes = {k: self._fraction_of(k) for k, _ in _LAYOUT_KEYS}
         # font face is governed by 화면 설정; only size / bold / visibility differ
@@ -1272,7 +1419,7 @@ class LayoutDialog(tk.Toplevel):
         s.save()
         self.app._update_font_preview()
         if messagebox.askyesno(self.i18n.t("done"), self.i18n.t("customize_saved")):
-            self.destroy()
+            self._on_close()
 
     def _reset(self) -> None:
         d = Settings()  # engine defaults
@@ -1289,7 +1436,9 @@ class LayoutDialog(tk.Toplevel):
         self._section_vars["bold"].set(d.section_bold)
         self._section_vars["enabled"].set(d.section_enabled)
         s.save()
-        self._draw_boxes(self._current_fractions())
+        fr = self._current_fractions()
+        self._boxes = {k: self._fr_to_px(fr[k]) for k, _ in _LAYOUT_KEYS}
+        self._redraw_overlay()
         self.app._update_font_preview()
 
 
@@ -1357,6 +1506,7 @@ class BackgroundManager(tk.Toplevel):
             self.settings.remove_background(path)
         self.settings.save()
         self.app._refresh_background_combo()
+        self.app._notify_background_changed()
         self._build_rows()
 
 

@@ -4,18 +4,22 @@ The font dropdown exposes a **fixed, curated** set of families rather than every
 system face, so a non-technical user picks from options that are known to look
 good and to be available on the Windows target:
 
-* **나눔스퀘어 Bold / 나눔스퀘어** — bundled (free), the default body font is the Bold;
-* **나눔고딕 / 나눔고딕 Bold** — bundled (OFL);
+* **나눔스퀘어 그룹** — Light / Regular / Bold / ExtraBold (bundled);
+* **나눔고딕 그룹** — Light / Regular / Bold / ExtraBold (bundled);
 * **맑은 고딕 / 굴림 / 돋움 / 바탕 / 궁서** — common Windows-provided families.
 
-Weight handling is subtle and is what :attr:`FontChoice.needs_bold_bit` encodes:
+The default body font is **나눔스퀘어 Bold**.
 
-* **나눔고딕** ships Regular + Bold members under one family (``나눔고딕``), so its
-  Bold is reached by *setting the bold bit* on the family;
-* **나눔스퀘어 Bold** is a *standalone* family whose name already carries the
-  weight (Windows lists each NanumSquare weight as its own family), so it must
-  be selected by name **without** an extra bold bit — otherwise the weight is
-  doubled (fake-bold).
+Weight handling is subtle and is what :attr:`FontChoice.needs_bold_bit` encodes.
+On Windows a font is picked by its *family name* (name ID 1); whether that face
+is already bold decides if an extra bold bit would fake-bold it:
+
+* **나눔고딕 / 나눔고딕 Bold** share the single family ``나눔고딕`` (a RIBBI pair),
+  so the Bold is reached by *setting the bold bit*;
+* every other bundled weight is a **standalone** family whose name already
+  carries the weight — ``나눔고딕 Light``, ``나눔고딕 ExtraBold``, ``나눔스퀘어 Light``,
+  ``나눔스퀘어``, ``나눔스퀘어 Bold``, ``나눔스퀘어 ExtraBold`` — so each is selected by
+  name **without** an extra bold bit (otherwise the weight is doubled).
 
 Bundled fonts are freely redistributable, so output is reproducible. Because a
 bundled font may not be installed system-wide, the live preview first tries to
@@ -51,13 +55,19 @@ def curated_fonts() -> list[FontChoice]:
     preview when not installed, e.g. on the build machine)."""
     d = _fonts_dir()
     return [
-        # NanumSquare Bold is a standalone family (name carries the weight):
-        # selected by name, no bold bit.
+        # -- 나눔스퀘어 group (default first). Each weight is a standalone family
+        #    whose name carries the weight -> select by name, no bold bit.
         FontChoice("나눔스퀘어 Bold", "나눔스퀘어 Bold", True, False, d / "NanumSquareB.ttf"),
+        FontChoice("나눔스퀘어 Light", "나눔스퀘어 Light", False, False, d / "NanumSquareL.ttf"),
         FontChoice("나눔스퀘어", "나눔스퀘어", False, False, d / "NanumSquareR.ttf"),
-        # NanumGothic Regular + Bold share one family; Bold needs the bold bit.
+        FontChoice("나눔스퀘어 ExtraBold", "나눔스퀘어 ExtraBold", True, False, d / "NanumSquareEB.ttf"),
+        # -- 나눔고딕 group. Regular + Bold share one family (Bold via bold bit);
+        #    Light and ExtraBold are standalone families (no bold bit).
+        FontChoice("나눔고딕 Light", "나눔고딕 Light", False, False, d / "NanumGothic-Light.ttf"),
         FontChoice("나눔고딕", "나눔고딕", False, False, d / "NanumGothic-Regular.ttf"),
         FontChoice("나눔고딕 Bold", "나눔고딕", True, True, d / "NanumGothic-Bold.ttf"),
+        FontChoice("나눔고딕 ExtraBold", "나눔고딕 ExtraBold", True, False, d / "NanumGothic-ExtraBold.ttf"),
+        # -- common Windows-provided families
         FontChoice("맑은 고딕", "맑은 고딕", False, False, None),
         FontChoice("굴림", "굴림", False, False, None),
         FontChoice("돋움", "돋움", False, False, None),
