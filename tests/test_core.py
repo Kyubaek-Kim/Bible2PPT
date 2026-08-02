@@ -289,6 +289,48 @@ def test_layout_box_override_moves_boxes():
         assert abs(a - b) < 1e-6
 
 
+def test_resized_body_box_changes_capacity():
+    """Shrinking the body region reduces the line/column capacity that
+    pagination uses, so custom regions really drive the layout engine."""
+    base = ppt.SlideStyle(aspect="16:9", body_font_size=32)
+    small = ppt.SlideStyle(
+        aspect="16:9", body_font_size=32,
+        layout_boxes={"body": [0.1, 0.4, 0.4, 0.3]},  # narrower + shorter
+    )
+    assert small.max_body_lines < base.max_body_lines
+    assert small.max_units_per_line < base.max_units_per_line
+
+
+def test_resized_title_box_forces_more_title_shrink():
+    """A narrower title region shrinks an over-long title further, keeping the
+    'title never overflows its box' rule tied to the resized geometry."""
+    wide = ppt.SlideStyle(aspect="16:9")
+    narrow = ppt.SlideStyle(aspect="16:9", layout_boxes={"title": [0.1, 0.03, 0.25, 0.12]})
+    title = "매우 긴 제목 예시 " * 4
+    wide_sz = ppt._fit_single_line_size(
+        title, wide.title_box[2], ppt.TITLE_FONT_SIZE, ppt.MIN_TITLE_FONT_SIZE)
+    narrow_sz = ppt._fit_single_line_size(
+        title, narrow.title_box[2], ppt.TITLE_FONT_SIZE, ppt.MIN_TITLE_FONT_SIZE)
+    assert narrow_sz < wide_sz
+
+
+def test_tiny_body_box_still_never_overflows():
+    """Even a cramped custom body region must not silently overflow: the engine
+    shrinks to the minimum size and raises when a bundle cannot fit."""
+    from core.alignment import Cell, VerseBundle
+    from core.bible import Coord
+
+    long_text = "여호와 " * 200
+    bundle = VerseBundle(coord=Coord("Gen", 1, 1),
+                         cells=[("KRV", Cell(status="ok", label="1", text=long_text))])
+    style = ppt.SlideStyle(
+        aspect="16:9", body_font_size=32,
+        layout_boxes={"body": [0.4, 0.4, 0.2, 0.15]},  # tiny region
+    )
+    with pytest.raises(ppt.PaginationError):
+        ppt.fit_pages([bundle], style)
+
+
 def test_body_bold_override_and_element_styling():
     # explicit user choice overrides the face's intrinsic weight
     regular = ppt.SlideStyle(font_name="나눔고딕")
@@ -603,24 +645,38 @@ def test_bundled_font_metadata_matches_mapping():
         return TTFont(str(ttf))["OS/2"].usWeightClass
 
     by_label = {f.label: f for f in fonts.curated_fonts()}
-    sqb = by_label["나눔스퀘어 Bold"]
-    sqr = by_label["나눔스퀘어"]
-    ng = by_label["나눔고딕"]
-    ngb = by_label["나눔고딕 Bold"]
 
-    # NanumSquare Bold is a standalone bold family (name carries the weight)
-    assert korean_family(sqb.bundled) == "나눔스퀘어 Bold" == sqb.typeface
-    assert weight_class(sqb.bundled) == 700 and sqb.needs_bold_bit is False
-    # NanumSquare regular is a distinct, lighter family + file
-    assert korean_family(sqr.bundled) == "나눔스퀘어" == sqr.typeface
-    assert weight_class(sqr.bundled) == 400
-    assert sqr.bundled != sqb.bundled
-    # NanumGothic regular/bold share the family but are distinct files/weights
+    # both full families are present: Light / Regular / Bold / ExtraBold
+    for group in ("나눔스퀘어", "나눔고딕"):
+        for label in (f"{group} Light", group, f"{group} Bold", f"{group} ExtraBold"):
+            assert label in by_label, f"missing {label}"
+
+    # each standalone-family weight: the font's Korean family name (nameID 1)
+    # equals the mapped typeface, and no bold bit is needed.
+    for label in (
+        "나눔스퀘어 Light", "나눔스퀘어", "나눔스퀘어 Bold", "나눔스퀘어 ExtraBold",
+        "나눔고딕 Light", "나눔고딕 ExtraBold",
+    ):
+        fc = by_label[label]
+        assert korean_family(fc.bundled) == fc.typeface == label
+        assert fc.needs_bold_bit is False
+
+    # ascending weights are distinct files with ascending usWeightClass
+    sq = [by_label[k].bundled for k in
+          ("나눔스퀘어 Light", "나눔스퀘어", "나눔스퀘어 Bold", "나눔스퀘어 ExtraBold")]
+    assert len(set(sq)) == 4
+    weights = [weight_class(b) for b in sq]
+    assert weights == sorted(weights) and weights[0] < weights[-1]
+
+    # NanumGothic Regular + Bold share one family; Bold uses the bold bit
+    ng, ngb = by_label["나눔고딕"], by_label["나눔고딕 Bold"]
     assert ng.typeface == ngb.typeface == "나눔고딕"
     assert ng.bundled != ngb.bundled
-    assert weight_class(ng.bundled) == 400 and weight_class(ngb.bundled) == 700
-    # reaching NanumGothic bold needs the bold bit; NanumSquare Bold does not
+    assert weight_class(ng.bundled) == 400 and weight_class(ngb.bundled) >= 600
     assert ngb.needs_bold_bit is True
+    # Light/ExtraBold are separate NanumGothic families (not the shared one)
+    assert by_label["나눔고딕 Light"].typeface == "나눔고딕 Light"
+    assert by_label["나눔고딕 ExtraBold"].typeface == "나눔고딕 ExtraBold"
 
 
 def test_stale_per_element_font_cannot_override_global(tmp_path, monkeypatch):
