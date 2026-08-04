@@ -15,6 +15,7 @@ keeps working after new fields are added.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -74,11 +75,17 @@ class Settings:
         return cls(**{k: v for k, v in raw.items() if k in known})
 
     def save(self) -> None:
+        """Persist atomically: write to a temp file in the same folder and
+        ``os.replace`` it into place, so a crash mid-write can never leave a
+        truncated/corrupt settings.json (which would silently reset all prefs)."""
         fp = paths.settings_file()
-        fp.write_text(
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        tmp = fp.with_name(fp.name + ".tmp")
+        tmp.write_text(
             json.dumps(asdict(self), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        os.replace(tmp, fp)
 
     # -- resolved accessors ---------------------------------------------- #
     def resolved_output_folder(self) -> Path:

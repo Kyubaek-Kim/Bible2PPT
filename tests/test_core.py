@@ -511,6 +511,30 @@ def test_text_colors_persist(tmp_path, monkeypatch):
     )
 
 
+def test_settings_save_is_atomic(tmp_path, monkeypatch):
+    from core import paths
+    from core.settings import Settings
+
+    fp = tmp_path / "settings.json"
+    monkeypatch.setattr(paths, "settings_file", lambda: fp)
+    Settings(body_font_size=44).save()
+    # a good file exists and no temp leftover remains
+    assert fp.exists()
+    assert not (tmp_path / "settings.json.tmp").exists()
+    assert Settings.load().body_font_size == 44
+
+    # a crash *during* the write must not destroy the previous good file
+    import core.settings as settings_mod
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(settings_mod.os, "replace", boom)
+    with pytest.raises(OSError):
+        Settings(body_font_size=12).save()
+    assert Settings.load().body_font_size == 44  # previous value preserved
+
+
 def test_ppt_applies_run_colors(tmp_path):
     import zipfile
 
