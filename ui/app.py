@@ -1069,7 +1069,8 @@ _CANVAS_W = 380  # px; height follows the slide aspect
 
 
 _MIN_BOX_PX = 26          # a box may not be shrunk below this in either axis
-_HANDLE = 7               # half-size of a corner resize handle (px)
+_HANDLE = 4               # half-size of a corner resize handle (px)
+_GRAB = 7                 # click tolerance around a handle centre (px)
 # corner -> (which x edge, which y edge) it moves, and the hover cursor
 _CORNERS = {
     "nw": (0, 1, "top_left_corner"),
@@ -1117,6 +1118,12 @@ class LayoutDialog(tk.Toplevel):
                                 background="#f4f4f4", highlightthickness=1,
                                 highlightbackground="#bbb")
         self.canvas.pack(pady=4)
+        # bind drag/release at the *canvas* level so redraws (which recreate the
+        # box/handle items every motion) never interrupt the event stream.
+        self.canvas.bind("<Button-1>", self._press)
+        self.canvas.bind("<B1-Motion>", self._motion)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
+        self.canvas.bind("<Motion>", self._hover)
         # live layout warnings (overlap / too small); empty when the layout is ok
         self.warn_label = ttk.Label(left, text="", foreground="#c0392b",
                                     wraplength=self._cw, justify="left")
@@ -1125,7 +1132,7 @@ class LayoutDialog(tk.Toplevel):
         # box geometry model in canvas px: {key: [x0, y0, x1, y1]}
         self._boxes: dict[str, list[float]] = {}
         self._bg_photo: ImageTk.PhotoImage | None = None
-        self._drag: tuple | None = None  # (key, mode, corner|None, last_x, last_y)
+        self._drag: tuple | None = None  # (key, mode, corner|None, snapshot, start_x, start_y)
 
         right = ttk.Frame(wrap)
         right.pack(side="left", fill="both", expand=True, padx=(12, 0))
@@ -1205,42 +1212,31 @@ class LayoutDialog(tk.Toplevel):
 
     # -- overlay (boxes + handles) --------------------------------------- #
     def _redraw_overlay(self) -> None:
+        """Repaint the boxes and their corner handles. Handles are purely
+        visual; all pointer hit-testing is done at the canvas level
+        (:meth:`_hit`) so repainting never interrupts an in-progress drag."""
         self.canvas.delete("ov")
         for key, colour in _LAYOUT_KEYS:
             enabled = self._element_enabled(key)
             draw_colour = colour if enabled else "#b0b0b0"
             x0, y0, x1, y1 = self._boxes[key]
-            rid = self.canvas.create_rectangle(
+            self.canvas.create_rectangle(
                 x0, y0, x1, y1, outline=draw_colour, width=2,
-                fill=draw_colour, stipple="gray12", tags=("ov", f"box:{key}"),
+                fill=draw_colour, stipple="gray12", tags="ov",
             )
             label = self.i18n.t(f"customize_{key}")
             if not enabled:
                 label = f"{label} ({self.i18n.t('customize_disabled')})"
-            tid = self.canvas.create_text(
+            self.canvas.create_text(
                 (x0 + x1) / 2, (y0 + y1) / 2, text=label, fill=draw_colour,
-                font=self._canvas_font(*self._element_style(key)), tags=("ov", f"box:{key}"),
+                font=self._canvas_font(*self._element_style(key)), tags="ov",
             )
-            for item in (rid, tid):
-                self.canvas.tag_bind(item, "<Button-1>", lambda e, k=key: self._press_move(e, k))
-                self.canvas.tag_bind(item, "<B1-Motion>", self._motion)
-                self.canvas.tag_bind(item, "<ButtonRelease-1>", self._release)
-                self.canvas.tag_bind(item, "<Enter>", lambda e: self.canvas.configure(cursor="fleur"))
-                self.canvas.tag_bind(item, "<Leave>", lambda e: self.canvas.configure(cursor=""))
-            # corner resize handles
-            for corner, (ix, iy, cursor) in _CORNERS.items():
+            for _corner, (ix, iy, _cursor) in _CORNERS.items():
                 hx, hy = self._boxes[key][ix], self._boxes[key][iy]
-                hid = self.canvas.create_rectangle(
+                self.canvas.create_rectangle(
                     hx - _HANDLE, hy - _HANDLE, hx + _HANDLE, hy + _HANDLE,
-                    outline=draw_colour, fill="white", width=1, tags=("ov", f"box:{key}"),
+                    outline=draw_colour, fill="white", width=1, tags="ov",
                 )
-                self.canvas.tag_bind(hid, "<Button-1>",
-                                     lambda e, k=key, c=corner: self._press_resize(e, k, c))
-                self.canvas.tag_bind(hid, "<B1-Motion>", self._motion)
-                self.canvas.tag_bind(hid, "<ButtonRelease-1>", self._release)
-                self.canvas.tag_bind(hid, "<Enter>",
-                                     lambda e, cur=cursor: self.canvas.configure(cursor=cur))
-                self.canvas.tag_bind(hid, "<Leave>", lambda e: self.canvas.configure(cursor=""))
         self._validate()
 
     def _element_style(self, key: str) -> tuple[str, int, bool]:
@@ -1283,38 +1279,85 @@ class LayoutDialog(tk.Toplevel):
         self._redraw_overlay()
 
     # -- move / resize interaction --------------------------------------- #
-    def _press_move(self, event, key: str) -> None:
-        self._drag = (key, "move", None, event.x, event.y)
+    def _hit(self, x: float, y: float) -> tuple[str, str, str | None] | None:
+        """Return (key, mode, corner) for the topmost box under (x, y).
 
-    def _press_resize(self, event, key: str, corner: str) -> None:
-        self._drag = (key, "resize", corner, event.x, event.y)
+        Corners (within _GRAB px of a handle centre) take priority over the
+        box interior. Boxes are tested front-to-back (body is drawn last, so
+        it sits on top). Returns None when the point hits empty canvas."""
+        order = [k for k, _ in reversed(_LAYOUT_KEYS)]
+        for key in order:
+            for corner, (ix, iy, _cur) in _CORNERS.items():
+                hx, hy = self._boxes[key][ix], self._boxes[key][iy]
+                if abs(x - hx) <= _GRAB and abs(y - hy) <= _GRAB:
+                    return (key, "resize", corner)
+        for key in order:
+            x0, y0, x1, y1 = self._boxes[key]
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return (key, "move", None)
+        return None
+
+    def _cursor_for(self, hit: tuple[str, str, str | None] | None) -> str:
+        if hit is None:
+            return ""
+        _key, mode, corner = hit
+        if mode == "resize" and corner is not None:
+            return _CORNERS[corner][2]
+        return "fleur"
+
+    def _hover(self, event) -> None:
+        if self._drag:
+            return
+        self.canvas.configure(cursor=self._cursor_for(self._hit(event.x, event.y)))
+
+    def _press(self, event) -> None:
+        hit = self._hit(event.x, event.y)
+        if hit is None:
+            self._drag = None
+            return
+        key, mode, corner = hit
+        # snapshot the box at press-time; motion is computed as an absolute
+        # offset from here, so the drag tracks the pointer 1:1 (no drift).
+        self._drag = (key, mode, corner, list(self._boxes[key]), event.x, event.y)
+        self.canvas.configure(cursor=self._cursor_for(hit))
 
     def _motion(self, event) -> None:
         if not self._drag:
             return
-        key, mode, corner, px, py = self._drag
+        key, mode, corner, snap, px, py = self._drag
         dx, dy = event.x - px, event.y - py
-        box = self._boxes[key]
         if mode == "move":
-            dx = max(-box[0], min(dx, self._cw - box[2]))
-            dy = max(-box[1], min(dy, self._ch - box[3]))
-            self._boxes[key] = [box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy]
+            w, h = snap[2] - snap[0], snap[3] - snap[1]
+            nx0 = min(max(snap[0] + dx, 0), self._cw - w)
+            ny0 = min(max(snap[1] + dy, 0), self._ch - h)
+            self._boxes[key] = [nx0, ny0, nx0 + w, ny0 + h]
         else:
             ix, iy, _ = _CORNERS[corner]
-            nx = min(max(box[ix] + dx, 0), self._cw)
-            ny = min(max(box[iy] + dy, 0), self._ch)
-            new = list(box)
+            new = list(snap)
+            nx = min(max(snap[ix] + dx, 0), self._cw)
+            ny = min(max(snap[iy] + dy, 0), self._ch)
+            # clamp the moving edge so the box keeps its minimum size
+            if ix == 0:
+                nx = min(nx, snap[2] - _MIN_BOX_PX)
+            else:
+                nx = max(nx, snap[0] + _MIN_BOX_PX)
+            if iy == 1:
+                ny = min(ny, snap[3] - _MIN_BOX_PX)
+            else:
+                ny = max(ny, snap[1] + _MIN_BOX_PX)
             new[ix], new[iy] = nx, ny
-            # keep min size by clamping the moved edge, not flipping the box
-            if abs(new[2] - new[0]) >= _MIN_BOX_PX:
-                box[ix] = nx
-            if abs(new[3] - new[1]) >= _MIN_BOX_PX:
-                box[iy] = ny
-        self._drag = (key, mode, corner, event.x, event.y)
+            self._boxes[key] = [
+                min(new[0], new[2]), min(new[1], new[3]),
+                max(new[0], new[2]), max(new[1], new[3]),
+            ]
         self._redraw_overlay()
 
     def _release(self, event) -> None:
-        self._drag = None
+        if self._drag:
+            self._drag = None
+            # re-evaluate warnings once the pointer is released
+            self._validate()
+        self.canvas.configure(cursor=self._cursor_for(self._hit(event.x, event.y)))
 
     # -- validation ------------------------------------------------------ #
     def _validate(self) -> list[str]:

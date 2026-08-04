@@ -163,6 +163,13 @@ generator.generate(passages, translation_codes, style, background, output_folder
 - `화면 구성 커스터마이징` 창(`LayoutDialog`): 제목·구절·본문 상자를 **이동(안쪽 드래그)** 하거나
   **크기 조절(모서리 흰 핸들 드래그 — 대각선 화살표 커서)** 하고, 제목·구절의 크기/굵기/활성화를 지정,
   `저장`/`초기화`.
+- **드래그 처리 모델**: 포인터 이벤트(`<Button-1>`/`<B1-Motion>`/`<ButtonRelease-1>`/`<Motion>`)는
+  개별 도형이 아니라 **캔버스 위젯 레벨**에 바인딩된다. 히트 테스트(`_hit`)가 좌표로 대상을
+  판정하므로(모서리 핸들 우선, 그다음 상자 내부; 겹칠 때는 위에 그려진 본문 우선), 매 이동마다
+  상자·핸들을 다시 그려도(`_redraw_overlay`) 드래그 이벤트 스트림이 끊기지 않는다. 이동량은
+  **누름 시점 스냅샷 대비 절대 오프셋**으로 계산해 커서를 1:1로 따라간다(핸들 재생성으로 인한
+  드리프트/“1픽셀만 움직임” 버그 방지). 핸들은 작게(`_HANDLE`) 그리되 클릭 허용 반경은 넉넉하게
+  (`_GRAB`) 둔다.
 - 캔버스 배경에는 현재 선택된 배경 이미지가 **20% 불투명도(=투명도 80%)** 로 흐리게 깔려, 상자·라벨
   가독성을 해치지 않으면서 실제 슬라이드 위 배치를 미리 본다. 메인 창에서 배경을 바꾸면 열려 있는
   커스터마이징 창의 배경도 즉시 갱신된다(`App._notify_background_changed`).
@@ -200,7 +207,11 @@ generator.generate(passages, translation_codes, style, background, output_folder
   번역본, 비율/글꼴/본문 크기/굵기, 생성 모드, 출력 폴더, 배경/히스토리, 레이아웃 상자 및 제목·구절
   타이포그래피.
 - **로딩 강건성**: 알 수 없는 키는 무시, 없는 키는 기본값 → 필드 추가 후에도 구버전 설정 파일 호환.
-  또한 더 이상 유효하지 않은 글꼴 라벨은 시작 시 기본 글꼴로 보정.
+  손상되어 파싱이 불가한 파일은 기본값으로 폴백. 또한 더 이상 유효하지 않은 글꼴 라벨은 시작 시
+  기본 글꼴로 보정.
+- **저장 강건성**: `Settings.save()`는 같은 폴더의 임시 파일에 먼저 쓰고 `os.replace`로 원자적으로
+  교체한다. 쓰기 도중 크래시가 나도 잘린/손상된 `settings.json`이 남지 않아(사용자 설정 전체가 조용히
+  초기화되는 사고 방지) 항상 이전 정상본이 보존된다.
 - 위치: Windows `%APPDATA%\Bible2PPT`, macOS `~/Library/Application Support/Bible2PPT`, Linux
   `$XDG_DATA_HOME/Bible2PPT`. 사용자 번역본은 사용자 데이터 폴더 하위 `bibles/`.
 
@@ -236,4 +247,5 @@ generator.generate(passages, translation_codes, style, background, output_folder
 - 본문 배치는 근사 폭/줄높이 모델로 계산 → PowerPoint 실제 레이아웃과 미세 차이 가능.
 - **macOS 이식**: `paths`/`platform_util`의 macOS 분기(경로/폴더 열기/폰트) 구현, spec의 `.app`
   브랜치, Font Book 안내 경로가 이미 격리되어 있어 최소 수정으로 확장 가능.
-- 사용자 JSON/번역본 메타의 스키마 검증, 원자적 파일 쓰기, SBLGNT/Nestle1904 어댑터는 향후 강화 지점.
+- 설정 저장은 이미 원자적(`os.replace`). 사용자 JSON/번역본 메타의 스키마 검증, 등록된 번역본
+  JSON의 원자적 쓰기, SBLGNT/Nestle1904 어댑터는 향후 강화 지점.
